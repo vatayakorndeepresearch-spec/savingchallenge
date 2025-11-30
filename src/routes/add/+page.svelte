@@ -68,6 +68,9 @@
                 }
             }
             loading = false;
+        } else {
+            // Ensure date is always today when adding new transaction
+            date = new Date().toISOString().split("T")[0];
         }
     });
 
