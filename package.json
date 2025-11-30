@@ -11,6 +11,7 @@
   },
   "devDependencies": {
     "@sveltejs/adapter-auto": "^2.0.0",
+    "@sveltejs/adapter-vercel": "^3.1.0",
     "@sveltejs/kit": "^1.20.4",
     "autoprefixer": "^10.4.14",
     "postcss": "^8.4.24",
@@ -26,5 +27,8 @@
     "date-fns": "^4.1.0",
     "lucide-svelte": "^0.294.0"
   },
-  "type": "module"
+  "type": "module",
+  "engines": {
+    "node": "18.x"
+  }
 }
