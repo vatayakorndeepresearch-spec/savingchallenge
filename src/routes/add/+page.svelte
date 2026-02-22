@@ -69,6 +69,10 @@
     let ocrRawText: string | null = null;
     let ocrConfidence: number | null = null;
     let ocrAnalysisToken = 0;
+    let aiCategorizing = false;
+    let aiCategoryMessage = "";
+    let aiCategoryConfidence: number | null = null;
+    let aiCategorySource: "minimax" | "fallback" | null = null;
 
     onMount(async () => {
         transactionId = $page.url.searchParams.get("id");
@@ -145,6 +149,10 @@
 
     $: if (!category.startsWith("Other")) {
         customCategory = "";
+    }
+
+    function getAiAllowedCategories(targetType: "income" | "expense"): string[] {
+        return getCategoriesByType(targetType).filter((cat) => cat !== "No Spend");
     }
 
     async function resolveOwnerForWrite(): Promise<string> {
@@ -366,6 +374,60 @@
             }
         }
     }
+
+    async function categorizeFromNoteWithAI() {
+        const trimmedNote = note.trim();
+        if (!trimmedNote) {
+            alert("กรุณาใส่บันทึกช่วยจำก่อนใช้ AI จัดหมวด");
+            return;
+        }
+
+        aiCategorizing = true;
+        aiCategoryMessage = "";
+        aiCategoryConfidence = null;
+        aiCategorySource = null;
+
+        try {
+            const response = await fetch("/api/classify-note", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    note: trimmedNote,
+                    type,
+                    categories: getAiAllowedCategories(type),
+                }),
+            });
+
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result?.error || "AI classification failed");
+            }
+
+            const selectedCategory = String(result.category || "").trim();
+            if (categories.includes(selectedCategory)) {
+                category = selectedCategory;
+                customCategory = "";
+            } else {
+                category = "Other (อื่นๆ)";
+            }
+
+            aiCategoryConfidence = Number.isFinite(Number(result.confidence))
+                ? Math.max(0, Math.min(1, Number(result.confidence)))
+                : null;
+            aiCategorySource =
+                result.source === "minimax" || result.source === "fallback"
+                    ? result.source
+                    : null;
+            aiCategoryMessage =
+                String(result.reason || "").trim() || "จัดหมวดหมู่สำเร็จ";
+        } catch (error) {
+            console.error("AI categorize error:", error);
+            aiCategoryMessage =
+                "ไม่สามารถจัดหมวดด้วย AI ได้ในขณะนี้ ลองใหม่อีกครั้ง";
+        } finally {
+            aiCategorizing = false;
+        }
+    }
 </script>
 
 <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
@@ -515,6 +577,42 @@
                 class="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent"
                 placeholder="รายละเอียดเพิ่มเติม..."
             ></textarea>
+
+            <div class="mt-2 flex items-center justify-between gap-2">
+                <button
+                    type="button"
+                    on:click={categorizeFromNoteWithAI}
+                    disabled={aiCategorizing || !note.trim()}
+                    class="text-xs font-medium px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                >
+                    {#if aiCategorizing}
+                        <Loader2 size={12} class="animate-spin" />
+                        MiniMax กำลังวิเคราะห์...
+                    {:else}
+                        ใช้ MiniMax จัดหมวด
+                    {/if}
+                </button>
+
+                {#if aiCategoryConfidence !== null}
+                    <span class="text-[11px] text-slate-500">
+                        ความมั่นใจ {Math.round(aiCategoryConfidence * 100)}%
+                    </span>
+                {/if}
+            </div>
+
+            {#if aiCategoryMessage}
+                <div
+                    class="mt-2 text-xs rounded-lg p-2 {aiCategorySource ===
+                    'fallback'
+                        ? 'bg-amber-50 text-amber-700 border border-amber-100'
+                        : 'bg-blue-50 text-blue-700 border border-blue-100'}"
+                >
+                    {aiCategoryMessage}
+                    {#if aiCategorySource}
+                        <span class="opacity-70"> ({aiCategorySource})</span>
+                    {/if}
+                </div>
+            {/if}
         </div>
 
         <!-- Image Upload -->

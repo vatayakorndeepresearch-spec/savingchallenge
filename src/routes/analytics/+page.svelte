@@ -1,5 +1,4 @@
 <script lang="ts">
-    import { onMount } from "svelte";
     import { supabase } from "$lib/supabaseClient";
     import { PieChart, PiggyBank, ArrowUpRight } from "lucide-svelte";
     import { currentUser } from "$lib/userStore";
@@ -29,9 +28,33 @@
         cta: string;
         positive: boolean;
     };
+    type CoachPriority = "high" | "medium" | "low";
+    type CoachRecommendation = {
+        title: string;
+        action: string;
+        priority: CoachPriority;
+        jar_key?: JarKey;
+        category_hint?: string;
+        note_hint?: string;
+    };
+    type CoachRecommendationPayload = {
+        title?: unknown;
+        action?: unknown;
+        priority?: unknown;
+        jar_key?: unknown;
+        category_hint?: unknown;
+        note_hint?: unknown;
+    };
     let jarBreakdown: JarAnalytics[] = [];
     let jarActions: JarAction[] = [];
     let insight = "";
+    let coachSummary = "";
+    let coachRecommendations: CoachRecommendation[] = [];
+    let coachConfidence: number | null = null;
+    let coachSource: "minimax" | "fallback" | null = null;
+    let coachLoading = false;
+    let coachError = "";
+    let coachRequestToken = 0;
 
     const jarCategoryMap: Record<JarKey, string> = {
         expense: "Other (อื่นๆ)",
@@ -76,6 +99,161 @@
             });
     }
 
+    function normalizeCoachJarKey(input: unknown): JarKey | null {
+        const value = String(input || "")
+            .trim()
+            .toLowerCase();
+        if (
+            value === "expense" ||
+            value === "saving" ||
+            value === "investment" ||
+            value === "debt"
+        ) {
+            return value;
+        }
+        return null;
+    }
+
+    function normalizeCoachPriority(input: unknown): CoachPriority {
+        const value = String(input || "")
+            .trim()
+            .toLowerCase();
+        if (value === "high" || value === "medium" || value === "low") {
+            return value;
+        }
+        return "medium";
+    }
+
+    function priorityBadgeClass(priority: CoachPriority): string {
+        if (priority === "high") return "bg-rose-100 text-rose-700";
+        if (priority === "medium") return "bg-amber-100 text-amber-700";
+        return "bg-emerald-100 text-emerald-700";
+    }
+
+    function priorityLabel(priority: CoachPriority): string {
+        if (priority === "high") return "เร่งด่วน";
+        if (priority === "medium") return "ปานกลาง";
+        return "ติดตาม";
+    }
+
+    function buildCoachAddLink(recommendation: CoachRecommendation): string {
+        const normalizedJar = normalizeCoachJarKey(recommendation.jar_key);
+        const fallbackCategory = normalizedJar
+            ? jarCategoryMap[normalizedJar]
+            : "Other (อื่นๆ)";
+        const category = recommendation.category_hint?.trim() || fallbackCategory;
+        const noteSeed =
+            recommendation.note_hint?.trim() ||
+            `${recommendation.title}: ${recommendation.action}`;
+        const note = noteSeed.slice(0, 180);
+        return `/add?type=expense&category=${encodeURIComponent(category)}&note=${encodeURIComponent(note)}`;
+    }
+
+    function resetCoachState() {
+        coachSummary = "";
+        coachRecommendations = [];
+        coachConfidence = null;
+        coachSource = null;
+        coachError = "";
+        coachLoading = false;
+    }
+
+    function getThaiMonthLabel(year: number, month: number): string {
+        return new Intl.DateTimeFormat("th-TH", {
+            month: "long",
+            year: "numeric",
+        }).format(new Date(year, month - 1, 1));
+    }
+
+    async function loadCoachAdvice() {
+        if (!$currentUser) return;
+
+        const requestToken = ++coachRequestToken;
+        coachLoading = true;
+        coachError = "";
+
+        const netSaving = totalIncome - totalExpense;
+        const savingRate = totalIncome > 0 ? netSaving / totalIncome : 0;
+        const payload = {
+            month: getThaiMonthLabel(currentYear, currentMonth),
+            totalIncome,
+            totalExpense,
+            totalLuxury,
+            netSaving,
+            savingRate: Math.max(0, Math.min(1, savingRate)),
+            jarBreakdown: jarBreakdown.map((jar) => ({
+                key: jar.key,
+                label: jar.label,
+                target: jar.amount,
+                actual: jar.actual,
+            })),
+            topCategories: categoryBreakdown.slice(0, 5),
+        };
+
+        try {
+            const response = await fetch("/api/financial-coach", {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                },
+                body: JSON.stringify(payload),
+            });
+            const result = await response.json();
+
+            if (requestToken !== coachRequestToken) return;
+            if (!response.ok) {
+                throw new Error(String(result?.error || `HTTP ${response.status}`));
+            }
+
+            const rawRecommendations: CoachRecommendationPayload[] = Array.isArray(
+                result?.recommendations,
+            )
+                ? result.recommendations
+                : [];
+            const recommendations: CoachRecommendation[] = rawRecommendations
+                .map((item: CoachRecommendationPayload) => ({
+                    title: String(item?.title || "").trim(),
+                    action: String(item?.action || "").trim(),
+                    priority: normalizeCoachPriority(item?.priority),
+                    jar_key: normalizeCoachJarKey(item?.jar_key) || undefined,
+                    category_hint: String(item?.category_hint || "")
+                        .trim()
+                        .slice(0, 80),
+                    note_hint: String(item?.note_hint || "")
+                        .trim()
+                        .slice(0, 180),
+                }))
+                .filter((item: CoachRecommendation) => item.title && item.action)
+                .slice(0, 4);
+
+            coachSummary = String(result?.summary || "").trim();
+            coachRecommendations = recommendations;
+            coachSource =
+                result?.source === "minimax" || result?.source === "fallback"
+                    ? result.source
+                    : null;
+
+            const confidenceRaw = Number.parseFloat(
+                String(result?.confidence ?? ""),
+            );
+            coachConfidence = Number.isFinite(confidenceRaw)
+                ? Math.max(0, Math.min(1, confidenceRaw))
+                : null;
+        } catch (error) {
+            if (requestToken !== coachRequestToken) return;
+            console.error("Failed to fetch financial coach:", error);
+            coachError = "โหลดคำแนะนำ AI ไม่สำเร็จ ลองใหม่อีกครั้ง";
+            coachSummary = "";
+            coachRecommendations = [];
+            coachConfidence = null;
+            coachSource = null;
+        } finally {
+            if (requestToken === coachRequestToken) {
+                coachLoading = false;
+            }
+        }
+    }
+
     const today = new Date();
     const currentMonth = today.getMonth() + 1;
     const currentYear = today.getFullYear();
@@ -96,6 +274,8 @@
             actual: 0,
             progress: 0,
         }));
+        coachRequestToken += 1;
+        resetCoachState();
         const startOfMonth = new Date(
             currentYear,
             currentMonth - 1,
@@ -191,6 +371,13 @@
             } else {
                 insight =
                     "ลองตรวจสอบรายการค่าใช้จ่ายดูนะครับ ว่ามีส่วนไหนลดได้บ้าง";
+            }
+
+            if (transactions.length > 0) {
+                void loadCoachAdvice();
+            } else {
+                coachSummary =
+                    "ยังไม่มีข้อมูลเดือนนี้ เพิ่มรายการเพื่อให้ AI วิเคราะห์พฤติกรรมการเงิน";
             }
         }
         loading = false;
@@ -294,6 +481,80 @@
                             </a>
                         </div>
                     {/each}
+                </div>
+            {/if}
+        </div>
+
+        <!-- AI Coach -->
+        <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-4">
+            <div class="flex items-center justify-between gap-2 mb-3">
+                <h3 class="font-bold text-slate-700">AI โค้ชนิสัยการเงิน</h3>
+                <button
+                    type="button"
+                    on:click={loadCoachAdvice}
+                    disabled={coachLoading ||
+                        (totalIncome === 0 && totalExpense === 0 && categoryBreakdown.length === 0)}
+                    class="text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    {coachLoading ? "กำลังวิเคราะห์..." : "วิเคราะห์ใหม่"}
+                </button>
+            </div>
+
+            {#if coachLoading}
+                <div class="text-xs text-slate-500">
+                    AI กำลังวิเคราะห์พฤติกรรมการเงิน...
+                </div>
+            {:else if coachError}
+                <div class="text-xs text-rose-600">{coachError}</div>
+            {:else if coachSummary}
+                <p class="text-sm text-slate-700 bg-slate-50 rounded-lg border border-slate-100 p-3">
+                    {coachSummary}
+                </p>
+
+                {#if coachRecommendations.length > 0}
+                    <div class="space-y-2 mt-3">
+                        {#each coachRecommendations as recommendation}
+                            <div class="rounded-lg border border-slate-200 p-3">
+                                <div class="flex items-center justify-between gap-2">
+                                    <div class="font-semibold text-sm text-slate-800">
+                                        {recommendation.title}
+                                    </div>
+                                    <span
+                                        class="text-[11px] font-medium px-2 py-0.5 rounded-full {priorityBadgeClass(recommendation.priority)}"
+                                    >
+                                        {priorityLabel(recommendation.priority)}
+                                    </span>
+                                </div>
+                                <div class="text-xs text-slate-600 mt-1">
+                                    {recommendation.action}
+                                </div>
+                                <a
+                                    href={buildCoachAddLink(recommendation)}
+                                    class="mt-2 inline-flex items-center gap-1 text-xs font-medium text-slate-700 hover:underline"
+                                >
+                                    ไปเพิ่มรายการตามคำแนะนำ
+                                    <ArrowUpRight size={12} />
+                                </a>
+                            </div>
+                        {/each}
+                    </div>
+                {/if}
+
+                {#if coachSource || coachConfidence !== null}
+                    <div class="mt-3 text-[11px] text-slate-400">
+                        แหล่งวิเคราะห์: {coachSource === "minimax"
+                            ? "MiniMax"
+                            : coachSource === "fallback"
+                              ? "Fallback"
+                              : "ไม่ระบุ"}
+                        {#if coachConfidence !== null}
+                            • ความมั่นใจ {Math.round(coachConfidence * 100)}%
+                        {/if}
+                    </div>
+                {/if}
+            {:else}
+                <div class="text-xs text-slate-500">
+                    ยังไม่มีข้อมูลเพียงพอสำหรับวิเคราะห์
                 </div>
             {/if}
         </div>

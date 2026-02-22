@@ -33,6 +33,10 @@ A minimal savings-tracking app for couples, built with SvelteKit and Supabase.
    ```env
    VITE_SUPABASE_URL=your_supabase_url
    VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+   MINIMAX_API_KEY=your_minimax_api_key
+   # Optional
+   # MINIMAX_BASE_URL=https://api.minimax.io/v1
+   # MINIMAX_MODEL=MiniMax-M2.5
    ```
 
 3. **Database Setup**
