@@ -3,7 +3,12 @@
     import { goto } from "$app/navigation";
     import { Upload, Loader2 } from "lucide-svelte";
     import { currentUser } from "$lib/userStore";
-    import { getJarAllocations, type JarAllocation } from "$lib/jars";
+    import {
+        getJarAllocations,
+        resolveJarForExpenseCategory,
+        type JarAllocation,
+        type JarKey,
+    } from "$lib/jars";
     import { runSlipOcr, type SlipOcrResult } from "$lib/slipOcr";
 
     import { page } from "$app/stores";
@@ -60,6 +65,10 @@
     let ocrError = "";
     let ocrResult: SlipOcrResult | null = null;
     let ocrAutoFilled = false;
+    let ocrPendingApply = false;
+    let ocrRawText: string | null = null;
+    let ocrConfidence: number | null = null;
+    let ocrAnalysisToken = 0;
 
     onMount(async () => {
         transactionId = $page.url.searchParams.get("id");
@@ -78,6 +87,13 @@
                 date = data.date;
                 note = data.note || "";
                 currentImagePath = data.image_path;
+                ocrRawText = data.ocr_raw_text || null;
+                const parsedConfidence = Number.parseFloat(
+                    String(data.ocr_confidence ?? ""),
+                );
+                ocrConfidence = Number.isFinite(parsedConfidence)
+                    ? parsedConfidence
+                    : null;
 
                 // Handle category
                 const availableCategories = getCategoriesByType(data.type);
@@ -99,6 +115,27 @@
         } else {
             // Ensure date is always today when adding new transaction
             date = new Date().toISOString().split("T")[0];
+
+            const presetType = $page.url.searchParams.get("type");
+            if (presetType === "income" || presetType === "expense") {
+                type = presetType;
+            }
+
+            const presetCategory = $page.url.searchParams.get("category");
+            if (presetCategory) {
+                const availableCategories = getCategoriesByType(type);
+                if (availableCategories.includes(presetCategory)) {
+                    category = presetCategory;
+                } else {
+                    category = "Other (อื่นๆ)";
+                    customCategory = presetCategory;
+                }
+            }
+
+            const presetNote = $page.url.searchParams.get("note");
+            if (presetNote) {
+                note = presetNote;
+            }
         }
     });
 
@@ -110,22 +147,35 @@
         customCategory = "";
     }
 
+    async function resolveOwnerForWrite(): Promise<string> {
+        const { data } = await supabase.auth.getUser();
+        const user = data.user;
+        const ownerFromClaim =
+            typeof user?.app_metadata?.owner === "string"
+                ? user.app_metadata.owner
+                : null;
+        return ownerFromClaim || user?.id || $currentUser;
+    }
+
     async function handleSubmit() {
         // Use custom category if 'Other' is selected
         const finalCategory =
             category.startsWith("Other") && customCategory
                 ? customCategory
                 : category;
+        const jar_key: JarKey | null =
+            type === "expense" ? resolveJarForExpenseCategory(finalCategory) : null;
 
         if (!amount || !finalCategory) return;
         loading = true;
+        const ownerForWrite = await resolveOwnerForWrite();
 
         let image_path = currentImagePath;
 
         if (file) {
             const fileExt = file.name.split(".").pop();
             const fileName = `${Math.random()}.${fileExt}`;
-            const filePath = `${$currentUser}/${fileName}`;
+            const filePath = `${ownerForWrite}/${fileName}`;
 
             const { error: uploadError } = await supabase.storage
                 .from("receipts")
@@ -147,7 +197,10 @@
             date,
             note,
             image_path,
-            owner: $currentUser,
+            jar_key,
+            ocr_raw_text: ocrRawText,
+            ocr_confidence: ocrConfidence,
+            owner: ownerForWrite,
         };
 
         let error;
@@ -183,13 +236,17 @@
         if (!confirm("ยืนยันว่าวันนี้ไม่ได้ใช้เงินเลย? (สุดยอด! 🎉)")) return;
 
         loading = true;
+        const ownerForWrite = await resolveOwnerForWrite();
         const { error } = await supabase.from("transactions").insert({
             type: "expense",
             amount: 0,
             category: "No Spend",
             date,
             note: "No Spend Day! 🎉",
-            owner: $currentUser,
+            jar_key: "expense",
+            ocr_raw_text: null,
+            ocr_confidence: null,
+            owner: ownerForWrite,
         });
 
         if (error) {
@@ -206,9 +263,12 @@
         if (target.files && target.files.length > 0) {
             file = target.files[0];
             ocrAutoFilled = false;
+            ocrPendingApply = false;
             ocrResult = null;
             ocrError = "";
             ocrProgress = 0;
+            ocrRawText = null;
+            ocrConfidence = null;
             const reader = new FileReader();
             reader.onload = (e) => {
                 previewUrl = e.target?.result as string;
@@ -248,26 +308,62 @@
             category = "Other (อื่นๆ)";
         }
 
+        ocrRawText = result.rawText || null;
+        ocrConfidence = result.confidence;
         ocrAutoFilled = true;
     }
 
+    function willOverwriteExistingValues(result: SlipOcrResult): boolean {
+        const amountWillChange =
+            result.amount !== null && amount !== null && amount !== result.amount;
+        const dateWillChange = !!result.date && !!date && date !== result.date;
+        const noteWillChange =
+            !!result.note.trim() &&
+            !!note.trim() &&
+            note.trim() !== result.note.trim();
+
+        return amountWillChange || dateWillChange || noteWillChange;
+    }
+
+    function handleApplyOcr() {
+        if (!ocrResult) return;
+
+        if (willOverwriteExistingValues(ocrResult)) {
+            const shouldOverwrite = confirm(
+                "OCR จะเขียนทับข้อมูลที่คุณกรอกไว้บางส่วน ต้องการดำเนินการต่อหรือไม่?",
+            );
+            if (!shouldOverwrite) return;
+        }
+
+        applyOcrResult(ocrResult, true);
+        ocrPendingApply = false;
+    }
+
     async function analyzeSlip(targetFile: File) {
+        const currentToken = ++ocrAnalysisToken;
         ocrLoading = true;
         ocrProgress = 0;
         ocrError = "";
 
         try {
             const result = await runSlipOcr(targetFile, (progress) => {
-                ocrProgress = progress;
+                if (currentToken === ocrAnalysisToken) {
+                    ocrProgress = progress;
+                }
             });
 
+            if (currentToken !== ocrAnalysisToken) return;
             ocrResult = result;
-            applyOcrResult(result, true);
+            ocrPendingApply = true;
+            ocrAutoFilled = false;
         } catch (error) {
+            if (currentToken !== ocrAnalysisToken) return;
             console.error("OCR error:", error);
             ocrError = "อ่านสลิปไม่สำเร็จ ลองอัปโหลดรูปที่คมชัดขึ้นอีกครั้ง";
         } finally {
-            ocrLoading = false;
+            if (currentToken === ocrAnalysisToken) {
+                ocrLoading = false;
+            }
         }
     }
 </script>
@@ -488,11 +584,9 @@
                         <button
                             type="button"
                             class="text-xs text-emerald-700 font-medium hover:underline"
-                            on:click={() => {
-                                if (ocrResult) applyOcrResult(ocrResult, true);
-                            }}
+                            on:click={handleApplyOcr}
                         >
-                            ใช้ค่าจาก OCR อีกครั้ง
+                            {ocrAutoFilled ? "Apply OCR อีกครั้ง" : "Apply OCR"}
                         </button>
                     </div>
                     <div class="grid grid-cols-2 gap-2 text-xs">
@@ -512,11 +606,21 @@
                         </div>
                     </div>
                     <div class="text-xs text-slate-600">
+                        ความมั่นใจ OCR: {ocrResult.confidence !== null
+                            ? `${ocrResult.confidence.toFixed(1)}%`
+                            : "-"}
+                    </div>
+                    <div class="text-xs text-slate-600">
                         โน้ตที่อ่านได้: {ocrResult.note}
                     </div>
+                    {#if ocrPendingApply}
+                        <div class="text-[11px] text-amber-700">
+                            ยังไม่เติมค่าลงฟอร์ม กด Apply OCR เพื่อยืนยันก่อนใช้งาน
+                        </div>
+                    {/if}
                     {#if ocrAutoFilled}
                         <div class="text-[11px] text-emerald-700">
-                            ระบบเติมค่าในฟอร์มให้อัตโนมัติแล้ว คุณสามารถแก้ไขต่อได้
+                            เติมค่าลงฟอร์มแล้ว คุณสามารถแก้ไขต่อได้
                         </div>
                     {/if}
                 </div>

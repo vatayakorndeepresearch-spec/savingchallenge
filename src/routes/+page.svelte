@@ -5,7 +5,7 @@
     import { currentUser, users } from "$lib/userStore";
     import {
         getJarAllocations,
-        resolveJarForExpenseCategory,
+        resolveJarForTransaction,
         type JarAllocation,
         type JarKey,
     } from "$lib/jars";
@@ -133,7 +133,10 @@
             };
 
             expenses.forEach((tx) => {
-                const resolvedJar = resolveJarForExpenseCategory(tx.category);
+                const resolvedJar = resolveJarForTransaction({
+                    jar_key: tx.jar_key,
+                    category: tx.category,
+                });
                 actualByJar[resolvedJar] += tx.amount;
             });
 

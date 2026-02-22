@@ -38,6 +38,8 @@ export const JAR_RULES: JarRule[] = [
     },
 ];
 
+const JAR_KEYS: JarKey[] = ["expense", "saving", "investment", "debt"];
+
 function roundCurrency(value: number): number {
     return Math.round((value + Number.EPSILON) * 100) / 100;
 }
@@ -75,6 +77,10 @@ export function inferJarFromCategory(category: string): JarKey | null {
     return null;
 }
 
+export function isJarKey(value: unknown): value is JarKey {
+    return typeof value === "string" && JAR_KEYS.includes(value as JarKey);
+}
+
 export function resolveJarForExpenseCategory(category: string): JarKey {
     const normalized = category.toLowerCase().trim();
 
@@ -105,4 +111,14 @@ export function resolveJarForExpenseCategory(category: string): JarKey {
     // Fallback for custom categories like "ออมฉุกเฉิน" or "debt payment"
     const inferred = inferJarFromCategory(category);
     return inferred ?? "expense";
+}
+
+export function resolveJarForTransaction(input: {
+    jar_key?: unknown;
+    category: string;
+}): JarKey {
+    if (isJarKey(input.jar_key)) {
+        return input.jar_key;
+    }
+    return resolveJarForExpenseCategory(input.category);
 }

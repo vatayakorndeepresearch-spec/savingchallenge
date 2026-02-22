@@ -1,11 +1,11 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import { supabase } from "$lib/supabaseClient";
-    import { PieChart, PiggyBank } from "lucide-svelte";
+    import { PieChart, PiggyBank, ArrowUpRight } from "lucide-svelte";
     import { currentUser } from "$lib/userStore";
     import {
         getJarAllocations,
-        resolveJarForExpenseCategory,
+        resolveJarForTransaction,
         type JarAllocation,
         type JarKey,
     } from "$lib/jars";
@@ -20,8 +20,61 @@
         count: number;
     }[] = [];
     type JarAnalytics = JarAllocation & { actual: number; progress: number };
+    type JarAction = {
+        key: JarKey;
+        title: string;
+        summary: string;
+        category: string;
+        note: string;
+        cta: string;
+        positive: boolean;
+    };
     let jarBreakdown: JarAnalytics[] = [];
+    let jarActions: JarAction[] = [];
     let insight = "";
+
+    const jarCategoryMap: Record<JarKey, string> = {
+        expense: "Other (อื่นๆ)",
+        saving: "Saving (ออม)",
+        investment: "Investment (ลงทุน)",
+        debt: "Debt (หนี้)",
+    };
+
+    const jarCtaMap: Record<JarKey, string> = {
+        expense: "เพิ่มรายการรายจ่าย",
+        saving: "เพิ่มรายการออม",
+        investment: "เพิ่มรายการลงทุน",
+        debt: "เพิ่มรายการจ่ายหนี้",
+    };
+
+    function buildAddLink(action: JarAction): string {
+        return `/add?type=expense&category=${encodeURIComponent(action.category)}&note=${encodeURIComponent(action.note)}`;
+    }
+
+    function buildJarActions(jars: JarAnalytics[]): JarAction[] {
+        return jars
+            .filter((jar) => jar.key !== "expense")
+            .map((jar) => {
+                const gap = jar.amount - jar.actual;
+                const positive = gap <= 0;
+                const absGap = Math.abs(gap).toLocaleString();
+                return {
+                    key: jar.key,
+                    title: positive
+                        ? `${jar.label} เกินเป้า ฿${absGap}`
+                        : `${jar.label} ต่ำกว่าเป้า ฿${absGap}`,
+                    summary: positive
+                        ? `ทำได้ ฿${jar.actual.toLocaleString()} จากเป้า ฿${jar.amount.toLocaleString()}`
+                        : `ตอนนี้ทำได้ ฿${jar.actual.toLocaleString()} จากเป้า ฿${jar.amount.toLocaleString()}`,
+                    category: jarCategoryMap[jar.key],
+                    note: positive
+                        ? `ติดตามกระปุก ${jar.label} ต่อเนื่องตามแผน 4 กระปุก`
+                        : `เติมกระปุก ${jar.label} ให้ถึงเป้าเดือนนี้`,
+                    cta: jarCtaMap[jar.key],
+                    positive,
+                };
+            });
+    }
 
     const today = new Date();
     const currentMonth = today.getMonth() + 1;
@@ -37,6 +90,7 @@
         totalExpense = 0;
         totalLuxury = 0;
         categoryBreakdown = [];
+        jarActions = [];
         jarBreakdown = getJarAllocations(0).map((jar) => ({
             ...jar,
             actual: 0,
@@ -107,7 +161,10 @@
             };
 
             expenses.forEach((tx) => {
-                const resolvedJar = resolveJarForExpenseCategory(tx.category);
+                const resolvedJar = resolveJarForTransaction({
+                    jar_key: tx.jar_key,
+                    category: tx.category,
+                });
                 actualByJar[resolvedJar] += tx.amount;
             });
 
@@ -117,6 +174,7 @@
                 progress:
                     jar.amount > 0 ? (actualByJar[jar.key] / jar.amount) * 100 : 0,
             }));
+            jarActions = buildJarActions(jarBreakdown);
 
             // Generate Insight
             const luxuryRatio =
@@ -200,6 +258,44 @@
                     </div>
                 {/each}
             </div>
+        </div>
+
+        <!-- Actionable Advice -->
+        <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-4">
+            <h3 class="font-bold text-slate-700 mb-3">คำแนะนำที่ทำได้ทันที</h3>
+            {#if jarActions.length === 0}
+                <div class="text-xs text-slate-500">ยังไม่มีคำแนะนำในเดือนนี้</div>
+            {:else}
+                <div class="space-y-2">
+                    {#each jarActions as action}
+                        <div
+                            class="rounded-lg border p-3 {action.positive
+                                ? 'border-emerald-100 bg-emerald-50'
+                                : 'border-amber-100 bg-amber-50'}"
+                        >
+                            <div
+                                class="font-semibold text-sm {action.positive
+                                    ? 'text-emerald-800'
+                                    : 'text-amber-800'}"
+                            >
+                                {action.title}
+                            </div>
+                            <div class="text-xs text-slate-600 mt-1">
+                                {action.summary}
+                            </div>
+                            <a
+                                href={buildAddLink(action)}
+                                class="mt-2 inline-flex items-center gap-1 text-xs font-medium {action.positive
+                                    ? 'text-emerald-700'
+                                    : 'text-amber-700'} hover:underline"
+                            >
+                                {action.cta}
+                                <ArrowUpRight size={12} />
+                            </a>
+                        </div>
+                    {/each}
+                </div>
+            {/if}
         </div>
 
         <!-- Luxury Insight -->

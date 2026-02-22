@@ -1,183 +1,276 @@
+import { preprocessImage } from "$lib/utils/imageProcessor";
+
 export type OcrProgressCallback = (progress: number) => void;
 
 export type SlipOcrResult = {
     rawText: string;
+    confidence: number | null; // 0-100
     amount: number | null;
     date: string | null; // YYYY-MM-DD
     note: string;
     inferredType: "income" | "expense" | null;
 };
 
-const THAI_MONTH_MAP: Record<string, number> = {
-    "ม.ค.": 1,
-    "ก.พ.": 2,
-    "มี.ค.": 3,
-    "เม.ย.": 4,
-    "พ.ค.": 5,
-    "มิ.ย.": 6,
-    "ก.ค.": 7,
-    "ส.ค.": 8,
-    "ก.ย.": 9,
-    "ต.ค.": 10,
-    "พ.ย.": 11,
-    "ธ.ค.": 12,
-    มกราคม: 1,
-    กุมภาพันธ์: 2,
-    มีนาคม: 3,
-    เมษายน: 4,
-    พฤษภาคม: 5,
-    มิถุนายน: 6,
-    กรกฎาคม: 7,
-    สิงหาคม: 8,
-    กันยายน: 9,
-    ตุลาคม: 10,
-    พฤศจิกายน: 11,
-    ธันวาคม: 12,
-};
+let sharedWorkerPromise: Promise<any> | null = null;
+let queuedJob: Promise<void> = Promise.resolve();
+let activeProgressCallback: OcrProgressCallback | null = null;
 
-function normalizeText(input: string): string {
-    return input
-        .replace(/\u0e33/g, "\u0e4d\u0e32")
-        .replace(/[|]/g, " ")
-        .replace(/[ ]{2,}/g, " ")
-        .trim();
+function normalizeConfidence(value: number | null | undefined): number | null {
+    if (typeof value !== "number" || !Number.isFinite(value)) return null;
+    return Math.max(0, Math.min(100, Math.round((value + Number.EPSILON) * 100) / 100));
 }
 
-function toISODate(day: number, month: number, year: number): string | null {
-    if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) {
-        return null;
-    }
+function parseAmount(lines: string[]): number | null {
+    // SharePay logic: prefer explicit "จำนวน" line first
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        const sameLineMatch = line.match(/(?:จำนวน|จํานวน)\s*[:.]?\s*([\d,]+\.?\d*)/i);
+        if (sameLineMatch && sameLineMatch[1]) {
+            const val = Number.parseFloat(sameLineMatch[1].replace(/,/g, ""));
+            if (!Number.isNaN(val) && val > 0) return val;
+        }
 
-    let normalizedYear = year;
-    if (normalizedYear > 2400) {
-        normalizedYear -= 543;
-    } else if (normalizedYear < 100) {
-        normalizedYear += 2000;
-    }
-
-    if (
-        normalizedYear < 2000 ||
-        normalizedYear > 2100 ||
-        month < 1 ||
-        month > 12 ||
-        day < 1 ||
-        day > 31
-    ) {
-        return null;
-    }
-
-    const date = new Date(Date.UTC(normalizedYear, month - 1, day));
-    if (
-        date.getUTCFullYear() !== normalizedYear ||
-        date.getUTCMonth() + 1 !== month ||
-        date.getUTCDate() !== day
-    ) {
-        return null;
-    }
-
-    const yyyy = String(normalizedYear);
-    const mm = String(month).padStart(2, "0");
-    const dd = String(day).padStart(2, "0");
-    return `${yyyy}-${mm}-${dd}`;
-}
-
-function extractDate(text: string): string | null {
-    const slashMatch = text.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-    if (slashMatch) {
-        const iso = toISODate(
-            Number.parseInt(slashMatch[1], 10),
-            Number.parseInt(slashMatch[2], 10),
-            Number.parseInt(slashMatch[3], 10),
-        );
-        if (iso) return iso;
-    }
-
-    const thaiMonthKeys = Object.keys(THAI_MONTH_MAP).sort(
-        (a, b) => b.length - a.length,
-    );
-    for (const monthText of thaiMonthKeys) {
-        const escapedMonth = monthText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const thaiMatch = text.match(
-            new RegExp(`(\\d{1,2})\\s*${escapedMonth}\\s*(\\d{2,4})`),
-        );
-        if (thaiMatch) {
-            const iso = toISODate(
-                Number.parseInt(thaiMatch[1], 10),
-                THAI_MONTH_MAP[monthText],
-                Number.parseInt(thaiMatch[2], 10),
-            );
-            if (iso) return iso;
+        if (line.match(/(?:จำนวน|จํานวน)\s*[:.]?\s*$/i) && i + 1 < lines.length) {
+            const nextLine = lines[i + 1].trim();
+            const nextMatch = nextLine.match(/([\d,]+\.?\d*)\s*(?:บาท|THB)?/i);
+            if (nextMatch && nextMatch[1]) {
+                const val = Number.parseFloat(nextMatch[1].replace(/,/g, ""));
+                if (!Number.isNaN(val) && val > 0) return val;
+            }
         }
     }
 
-    const enMatch = text.match(
-        /(\d{1,2})\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*(\d{2,4})/i,
-    );
-    if (enMatch) {
-        const monthLookup: Record<string, number> = {
-            jan: 1,
-            feb: 2,
-            mar: 3,
-            apr: 4,
-            may: 5,
-            jun: 6,
-            jul: 7,
-            aug: 8,
-            sep: 9,
-            oct: 10,
-            nov: 11,
-            dec: 12,
-        };
-        const month = monthLookup[enMatch[2].slice(0, 3).toLowerCase()];
-        const iso = toISODate(
-            Number.parseInt(enMatch[1], 10),
-            month,
-            Number.parseInt(enMatch[3], 10),
-        );
-        if (iso) return iso;
+    // SharePay fallback: ignore fee lines
+    for (const line of lines) {
+        if (line.match(/ค่าธรรมเนียม|fee/i)) continue;
+        const match = line.match(/([\d,]+\.\d{2})\s*(?:บาท|THB)/i);
+        if (!match) continue;
+        const val = Number.parseFloat(match[1].replace(/,/g, ""));
+        if (!Number.isNaN(val) && val > 0) return val;
     }
 
     return null;
 }
 
-function parseAmountFromToken(amountText: string): number | null {
-    const numeric = Number.parseFloat(amountText.replace(/,/g, ""));
-    if (!Number.isFinite(numeric) || numeric <= 0) return null;
-    if (numeric > 1_000_000_000) return null;
-    return Math.round((numeric + Number.EPSILON) * 100) / 100;
-}
+function parseDate(lines: string[]): string | null {
+    // SharePay month mapping (including OCR-misread aliases)
+    const thaiMonthMap: Record<string, number> = {
+        มค: 1,
+        กพ: 2,
+        มีค: 3,
+        เมย: 4,
+        พค: 5,
+        มิย: 6,
+        กค: 7,
+        สค: 8,
+        กย: 9,
+        ตค: 10,
+        พย: 11,
+        ธค: 12,
+        มกราคม: 1,
+        กุมภาพันธ์: 2,
+        มีนาคม: 3,
+        เมษายน: 4,
+        พฤษภาคม: 5,
+        มิถุนายน: 6,
+        กรกฎาคม: 7,
+        สิงหาคม: 8,
+        กันยายน: 9,
+        ตุลาคม: 10,
+        พฤศจิกายน: 11,
+        ธันวาคม: 12,
+        jan: 1,
+        feb: 2,
+        mar: 3,
+        apr: 4,
+        may: 5,
+        jun: 6,
+        jul: 7,
+        aug: 8,
+        sep: 9,
+        oct: 10,
+        nov: 11,
+        dec: 12,
+        "5m": 12,
+        sm: 12,
+        "8m": 12,
+        "s.m": 12,
+        "5.m": 12,
+        sh: 12,
+        "5h": 12,
+        sk: 12,
+        sn: 12,
+        "5n": 12,
+        "5k": 12,
+        "1m": 1,
+        nm: 1,
+        wk: 1,
+        mk: 1,
+        nw: 2,
+        "n.w": 2,
+        aw: 2,
+        "a.w": 2,
+    };
 
-function extractAmount(text: string): number | null {
-    const contextPatterns = [
-        /(amount|ยอด|จำนวนเงิน|บาท|thb|baht)\s*[:\-]?\s*([0-9][0-9,]*\.[0-9]{2})/i,
-        /([0-9][0-9,]*\.[0-9]{2})\s*(บาท|thb|baht)/i,
-    ];
+    let dateLine: string | null = null;
 
-    for (const pattern of contextPatterns) {
-        const match = text.match(pattern);
-        if (match) {
-            const amountText = match[2] || match[1];
-            const amount = parseAmountFromToken(amountText);
-            if (amount) return amount;
+    for (const line of lines) {
+        if (line.includes("วันที่") || line.includes("วนท") || line.includes("วันท")) {
+            dateLine = line;
+            break;
+        }
+        if (
+            (line.match(/\d{1,2}:\d{2}/) || line.includes("น.") || line.includes("น,")) &&
+            line.match(/^\d{1,2}\s/)
+        ) {
+            dateLine = line;
+            break;
         }
     }
 
-    const allMatches = text.match(/[0-9][0-9,]*\.[0-9]{2}/g) || [];
-    const candidates = allMatches
-        .map((token) => parseAmountFromToken(token))
-        .filter((value): value is number => value !== null)
-        .sort((a, b) => b - a);
+    if (!dateLine) {
+        for (const line of lines) {
+            if (line.match(/^\d{1,2}\s+[ก-๙a-zA-Z0-9\.\-]+\s+\d{2,4}/)) {
+                dateLine = line;
+                break;
+            }
+        }
+    }
 
-    return candidates[0] ?? null;
+    if (!dateLine) {
+        // Extra fallback for dd/mm/yyyy style lines
+        for (const line of lines) {
+            const slashMatch = line.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+            if (!slashMatch) continue;
+
+            const d = Number.parseInt(slashMatch[1], 10);
+            const m = Number.parseInt(slashMatch[2], 10);
+            let y = Number.parseInt(slashMatch[3], 10);
+
+            if (y > 2500) y -= 543;
+            else if (y < 100) y = y > 40 ? 2500 + y - 543 : 2000 + y;
+
+            if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 2000 && y <= 2100) {
+                const pad = (n: number) => String(n).padStart(2, "0");
+                return `${y}-${pad(m)}-${pad(d)}`;
+            }
+        }
+
+        return null;
+    }
+
+    const fullMatch =
+        dateLine.match(/^(\d{1,2})[\s\.\/-]+([ก-๙a-zA-Z0-9\.\-]+)[\s\.\/-]+(\d{2,4})/) ||
+        dateLine.match(
+            /(?:วันที่|วนท|วันท)[\s:]*(\d{1,2})[\s\.\/-]+([ก-๙a-zA-Z0-9\.\-]+)[\s\.\/-]+(\d{2,4})/,
+        );
+
+    if (!fullMatch) {
+        const slashMatch = dateLine.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+        if (!slashMatch) return null;
+
+        const d = Number.parseInt(slashMatch[1], 10);
+        const m = Number.parseInt(slashMatch[2], 10);
+        let y = Number.parseInt(slashMatch[3], 10);
+
+        if (y > 2500) y -= 543;
+        else if (y < 100) y = y > 40 ? 2500 + y - 543 : 2000 + y;
+
+        if (d < 1 || d > 31 || m < 1 || m > 12 || y < 2000 || y > 2100) return null;
+
+        const pad = (n: number) => String(n).padStart(2, "0");
+        return `${y}-${pad(m)}-${pad(d)}`;
+    }
+
+    const day = Number.parseInt(fullMatch[1], 10);
+    const monthRaw = fullMatch[2].toLowerCase().replace(/[\.\s\-]/g, "");
+    const yearRaw = Number.parseInt(fullMatch[3], 10);
+    if (Number.isNaN(day) || Number.isNaN(yearRaw) || day < 1 || day > 31) return null;
+
+    let month = thaiMonthMap[monthRaw];
+    if (!month && monthRaw.match(/^\d{1,2}$/)) {
+        const parsedMonth = Number.parseInt(monthRaw, 10);
+        if (parsedMonth >= 1 && parsedMonth <= 12) month = parsedMonth;
+    }
+
+    if (!month) {
+        for (const [key, value] of Object.entries(thaiMonthMap)) {
+            if (
+                monthRaw.length >= 2 &&
+                (monthRaw.startsWith(key) || key.startsWith(monthRaw) || monthRaw.includes(key))
+            ) {
+                month = value;
+                break;
+            }
+        }
+    }
+
+    if (!month) {
+        if (
+            (monthRaw.includes("m") ||
+                monthRaw.includes("n") ||
+                monthRaw.includes("k") ||
+                monthRaw.includes("h")) &&
+            (monthRaw.includes("5") || monthRaw.includes("s") || monthRaw.includes("8"))
+        ) {
+            month = 12;
+        }
+        if (monthRaw.includes("ค") || monthRaw.includes("ธ")) month = 12;
+        if (monthRaw.includes("ม") && (monthRaw.includes("ค") || monthRaw.length <= 3)) {
+            month = 1;
+        }
+    }
+
+    if (!month) return null;
+
+    let finalYear = yearRaw;
+    if (finalYear > 2500) finalYear -= 543;
+    else if (finalYear < 100) {
+        if (finalYear > 40) finalYear = 2500 + finalYear - 543;
+        else finalYear = 2000 + finalYear;
+    }
+
+    if (finalYear < 2000 || finalYear > 2100) return null;
+
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${finalYear}-${pad(month)}-${pad(day)}`;
+}
+
+function parseNote(lines: string[]): string {
+    // SharePay logic: prefer explicit Note/Memo label
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const noteLabelMatch = line.match(/(?:บันทึกช่วยจำ|บันทึกช่วยจํา|Note|Memo)/i);
+        if (!noteLabelMatch) continue;
+
+        let content = line
+            .substring(noteLabelMatch.index! + noteLabelMatch[0].length)
+            .replace(/^[:.\s]+/, "")
+            .trim();
+
+        if (!content && i + 1 < lines.length) content = lines[i + 1].trim();
+        if (content) return content.slice(0, 180);
+    }
+
+    // SharePay fallback
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        const noteMatch = line.match(/ค่า[ก-๙a-zA-Z]+/);
+        if (noteMatch) return noteMatch[0].slice(0, 180);
+    }
+
+    return "OCR จากสลิป";
 }
 
 function inferTransactionType(textLower: string): "income" | "expense" | null {
     const incomeHints = [
+        "receive",
         "received",
         "incoming",
         "credit",
         "โอนเข้า",
         "รับโอน",
+        "รับเงิน",
         "เงินเข้า",
         "ได้รับเงิน",
     ];
@@ -189,6 +282,7 @@ function inferTransactionType(textLower: string): "income" | "expense" | null {
         "โอนเงิน",
         "จ่าย",
         "ชำระ",
+        "ชำระเงิน",
         "ถอนเงิน",
         "เงินออก",
     ];
@@ -201,28 +295,43 @@ function inferTransactionType(textLower: string): "income" | "expense" | null {
     return null;
 }
 
-function buildNote(rawText: string): string {
+async function getSharedWorker(): Promise<any> {
+    if (!sharedWorkerPromise) {
+        sharedWorkerPromise = (async () => {
+            const { createWorker } = await import("tesseract.js");
+            return createWorker("tha+eng", 1, {
+                logger: (message: { status?: string; progress?: number }) => {
+                    if (
+                        message.status === "recognizing text" &&
+                        typeof message.progress === "number"
+                    ) {
+                        activeProgressCallback?.(message.progress);
+                    }
+                },
+            });
+        })();
+    }
+    return sharedWorkerPromise;
+}
+
+export function parseSlipOcrText(
+    rawText: string,
+    confidence: number | null = null,
+): SlipOcrResult {
     const lines = rawText
         .split("\n")
         .map((line) => line.trim())
-        .filter(Boolean)
-        .filter((line) => !/^[0-9:\/\-. ]+$/.test(line));
+        .filter((line) => line.length > 0);
 
-    if (lines.length === 0) return "OCR จากสลิป";
-    const concise = lines.slice(0, 4).join(" | ");
-    return concise.slice(0, 180);
-}
-
-export function parseSlipOcrText(rawText: string): SlipOcrResult {
-    const normalized = normalizeText(rawText);
-    const lowered = normalized.toLowerCase();
+    const normalized = lines.join("\n");
 
     return {
         rawText: normalized,
-        amount: extractAmount(normalized),
-        date: extractDate(normalized),
-        note: buildNote(rawText),
-        inferredType: inferTransactionType(lowered),
+        confidence: normalizeConfidence(confidence),
+        amount: parseAmount(lines),
+        date: parseDate(lines),
+        note: parseNote(lines),
+        inferredType: inferTransactionType(normalized.toLowerCase()),
     };
 }
 
@@ -230,19 +339,35 @@ export async function runSlipOcr(
     file: File,
     onProgress?: OcrProgressCallback,
 ): Promise<SlipOcrResult> {
-    const { createWorker } = await import("tesseract.js");
-    const worker = await createWorker("eng+tha", 1, {
-        logger: (message: { status: string; progress: number }) => {
-            if (message.status === "recognizing text") {
-                onProgress?.(message.progress);
-            }
-        },
-    });
+    const execute = async () => {
+        const worker = await getSharedWorker();
+        activeProgressCallback = onProgress ?? null;
+        onProgress?.(0);
 
-    try {
-        const result = await worker.recognize(file);
-        return parseSlipOcrText(result.data.text || "");
-    } finally {
-        await worker.terminate();
-    }
+        try {
+            const processedImageUrl = await preprocessImage(file);
+            const result = await worker.recognize(processedImageUrl);
+            const rawText = result?.data?.text || "";
+            const confidence = normalizeConfidence(result?.data?.confidence);
+            return parseSlipOcrText(rawText, confidence);
+        } finally {
+            activeProgressCallback = null;
+            onProgress?.(1);
+        }
+    };
+
+    const queuedExecution = queuedJob.then(execute, execute);
+    queuedJob = queuedExecution.then(
+        () => undefined,
+        () => undefined,
+    );
+
+    return queuedExecution;
+}
+
+export async function terminateSlipOcrWorker(): Promise<void> {
+    if (!sharedWorkerPromise) return;
+    const worker = await sharedWorkerPromise;
+    await worker.terminate();
+    sharedWorkerPromise = null;
 }
