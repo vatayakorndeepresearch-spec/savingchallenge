@@ -473,6 +473,14 @@
         return filePath;
     }
 
+    async function cleanupReceiptUpload(filePath: string | null): Promise<void> {
+        if (!filePath) return;
+        const { error } = await supabase.storage.from("receipts").remove([filePath]);
+        if (error) {
+            console.warn("Bulk receipt cleanup failed:", error);
+        }
+    }
+
     async function insertTransactionWithOptionalColumns(
         basePayload: Record<string, unknown>,
         optionalPayload: Record<string, unknown>,
@@ -539,8 +547,9 @@
             saveError: "",
         }));
 
+        let imagePath: string | null = null;
         try {
-            const imagePath = await uploadReceipt(owner, current.file);
+            imagePath = await uploadReceipt(owner, current.file);
             const finalCategory = getFinalCategory(current);
             const jarKey: JarKey | null =
                 current.type === "expense"
@@ -583,6 +592,7 @@
             }));
             return { ok: true, skipped: false };
         } catch (error) {
+            await cleanupReceiptUpload(imagePath);
             const message =
                 error instanceof Error && error.message
                     ? error.message

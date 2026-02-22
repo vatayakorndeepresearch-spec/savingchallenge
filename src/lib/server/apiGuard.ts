@@ -71,6 +71,13 @@ function applyRateLimit(rateKey: string): { allowed: boolean; retryAfterSec: num
     return { allowed: true, retryAfterSec: 0 };
 }
 
+export function applyApiRouteRateLimit(
+    routeKey: string,
+    subjectKey: string,
+): { allowed: boolean; retryAfterSec: number } {
+    return applyRateLimit(`${routeKey}:${subjectKey}`);
+}
+
 async function verifySupabaseUser(accessToken: string): Promise<string | null> {
     const now = Date.now();
     const cached = tokenCache.get(accessToken);

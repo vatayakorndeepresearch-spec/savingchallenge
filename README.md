@@ -42,7 +42,9 @@ A minimal savings-tracking app for couples, built with SvelteKit and Supabase.
    # MINIMAX_MODEL=MiniMax-M2.5
    ```
    Notes:
-   - `/api/classify-note` and `/api/financial-coach` can be used without auth in no-auth mode.
+   - `/api/classify-note` and `/api/financial-coach` now require either:
+     - valid Supabase Bearer token (`Authorization: Bearer <access_token>`), or
+     - unlocked passcode session cookie (`APP_PASSCODE` flow).
    - If `APP_PASSCODE` is set (digits only), users must enter this passcode at `/unlock` before using the app/API.
 
 3. **Database Setup**

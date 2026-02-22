@@ -142,6 +142,14 @@
         return owner;
     }
 
+    async function cleanupReceiptUpload(filePath: string | null): Promise<void> {
+        if (!filePath) return;
+        const { error } = await supabase.storage.from("receipts").remove([filePath]);
+        if (error) {
+            console.warn("Receipt cleanup failed:", error);
+        }
+    }
+
     async function handleSubmit() {
         // Use custom category if 'Other' is selected
         const finalCategory =
@@ -164,6 +172,7 @@
         }
 
         let image_path = currentImagePath;
+        let uploadedImagePath: string | null = null;
 
         if (file) {
             const fileExt = file.name.split(".").pop();
@@ -181,6 +190,7 @@
                 return;
             }
             image_path = filePath;
+            uploadedImagePath = filePath;
         }
 
         const payload = {
@@ -212,9 +222,19 @@
         }
 
         if (error) {
+            await cleanupReceiptUpload(uploadedImagePath);
             console.error("Error saving transaction:", error);
             alert("Failed to save transaction");
         } else {
+            const shouldCleanupPreviousReceipt =
+                isEditMode &&
+                uploadedImagePath &&
+                currentImagePath &&
+                currentImagePath !== uploadedImagePath;
+            if (shouldCleanupPreviousReceipt) {
+                await cleanupReceiptUpload(currentImagePath);
+            }
+
             if (isEditMode) {
                 goto(`/transactions/${transactionId}`);
             } else {
