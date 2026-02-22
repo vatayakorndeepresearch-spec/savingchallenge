@@ -3,6 +3,12 @@
     import { supabase } from "$lib/supabaseClient";
     import { Wallet, TrendingUp, TrendingDown } from "lucide-svelte";
     import { currentUser, users } from "$lib/userStore";
+    import {
+        getJarAllocations,
+        inferJarFromCategory,
+        type JarAllocation,
+        type JarKey,
+    } from "$lib/jars";
 
     let loading = true;
     let totalIncome = 0;
@@ -10,6 +16,47 @@
     let budgetAmount: number | null = null;
     let score = 0;
     let insight = "";
+    type JarProgress = JarAllocation & {
+        actual: number;
+        delta: number;
+        progress: number;
+    };
+    let jarProgress: JarProgress[] = getJarAllocations(0).map((jar) => ({
+        ...jar,
+        actual: 0,
+        delta: 0,
+        progress: 0,
+    }));
+
+    const jarStyles: Record<
+        JarKey,
+        { bg: string; border: string; text: string; bar: string }
+    > = {
+        expense: {
+            bg: "bg-rose-50",
+            border: "border-rose-100",
+            text: "text-rose-700",
+            bar: "bg-rose-500",
+        },
+        saving: {
+            bg: "bg-emerald-50",
+            border: "border-emerald-100",
+            text: "text-emerald-700",
+            bar: "bg-emerald-500",
+        },
+        investment: {
+            bg: "bg-blue-50",
+            border: "border-blue-100",
+            text: "text-blue-700",
+            bar: "bg-blue-500",
+        },
+        debt: {
+            bg: "bg-amber-50",
+            border: "border-amber-100",
+            text: "text-amber-700",
+            bar: "bg-amber-500",
+        },
+    };
 
     const today = new Date();
     const currentMonth = today.getMonth() + 1;
@@ -22,6 +69,16 @@
 
     async function loadData() {
         loading = true;
+        totalIncome = 0;
+        totalExpense = 0;
+        score = 0;
+        insight = "สู้ๆ นะครับ ช่วยกันเก็บออมเพื่ออนาคต! 💪";
+        jarProgress = getJarAllocations(0).map((jar) => ({
+            ...jar,
+            actual: 0,
+            delta: 0,
+            progress: 0,
+        }));
 
         // Get transactions for current month
         const startOfMonth = new Date(
@@ -68,6 +125,29 @@
             totalExpense = expenses.reduce((sum, t) => sum + t.amount, 0);
             totalIncome = incomes.reduce((sum, t) => sum + t.amount, 0);
 
+            const actualByJar: Record<JarKey, number> = {
+                expense: 0,
+                saving: 0,
+                investment: 0,
+                debt: 0,
+            };
+
+            expenses.forEach((tx) => {
+                const detectedJar = inferJarFromCategory(tx.category);
+                if (detectedJar) {
+                    actualByJar[detectedJar] += tx.amount;
+                } else {
+                    actualByJar.expense += tx.amount;
+                }
+            });
+
+            jarProgress = getJarAllocations(totalIncome).map((jar) => {
+                const actual = actualByJar[jar.key];
+                const delta = jar.amount - actual;
+                const progress = jar.amount > 0 ? (actual / jar.amount) * 100 : 0;
+                return { ...jar, actual, delta, progress };
+            });
+
             // Calculate Personal Score
             score = 0;
             if (budgetAmount && budgetAmount > 0) {
@@ -76,7 +156,9 @@
             }
 
             const luxuryCount = expenses.filter(
-                (t) => t.category.toLowerCase() === "luxury",
+                (t) =>
+                    t.category.toLowerCase().includes("luxury") ||
+                    t.category.includes("ฟุ่มเฟือย"),
             ).length;
             score -= luxuryCount * 10;
 
@@ -145,6 +227,64 @@
             <div class="text-xl font-bold text-slate-800">
                 ฿{totalExpense.toLocaleString()}
             </div>
+        </div>
+    </div>
+
+    <!-- 4-Jar Allocation -->
+    <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
+        <h3 class="font-bold text-slate-700 mb-1">แผน 4 กระปุกอัตโนมัติ</h3>
+        <p class="text-xs text-slate-500 mb-4">
+            ระบบคำนวณจากรายรับเดือนนี้ตามสูตร 40/20/20/20
+        </p>
+
+        <div class="space-y-3">
+            {#each jarProgress as jar}
+                <div
+                    class="rounded-xl border p-3 {jarStyles[jar.key].bg} {jarStyles[jar.key]
+                    .border}"
+                >
+                    <div class="flex justify-between items-start mb-2">
+                        <div>
+                            <div class="text-xs text-slate-500">
+                                {jar.label} ({Math.round(jar.percent * 100)}%)
+                            </div>
+                            <div
+                                class="text-sm font-semibold {jarStyles[jar.key].text}"
+                            >
+                                {jar.labelTh}
+                            </div>
+                        </div>
+                        <div class="text-right text-xs">
+                            <div class="text-slate-500">Allocated</div>
+                            <div class="font-bold text-slate-800">
+                                ฿{jar.amount.toLocaleString()}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="overflow-hidden h-2 rounded bg-white/70 mb-2">
+                        <div
+                            style="width: {Math.min(100, Math.max(0, jar.progress))}%"
+                            class="h-2 rounded {jarStyles[jar.key].bar}"
+                        ></div>
+                    </div>
+
+                    <div class="flex justify-between text-xs">
+                        <span class="text-slate-600"
+                            >ใช้งานจริง: ฿{jar.actual.toLocaleString()}</span
+                        >
+                        <span
+                            class={jar.delta >= 0
+                                ? "text-emerald-700 font-medium"
+                                : "text-rose-700 font-medium"}
+                        >
+                            {jar.delta >= 0 ? "เหลือ" : "เกิน"} ฿{Math.abs(
+                                jar.delta,
+                            ).toLocaleString()}
+                        </span>
+                    </div>
+                </div>
+            {/each}
         </div>
     </div>
 

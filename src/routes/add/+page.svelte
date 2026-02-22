@@ -3,6 +3,7 @@
     import { goto } from "$app/navigation";
     import { Upload, Loader2 } from "lucide-svelte";
     import { currentUser } from "$lib/userStore";
+    import { getJarAllocations, type JarAllocation } from "$lib/jars";
 
     import { page } from "$app/stores";
     import { onMount } from "svelte";
@@ -18,7 +19,7 @@
     let transactionId: string | null = null;
     let currentImagePath: string | null = null;
 
-    const categories = [
+    const expenseCategories = [
         "Food (อาหาร)",
         "Transport (เดินทาง)",
         "Shopping (ช้อปปิ้ง)",
@@ -27,10 +28,30 @@
         "Health (สุขภาพ)",
         "Entertainment (บันเทิง)",
         "Donation (บริจาค)",
+        "Saving (ออม)",
         "Investment (ลงทุน)",
-        "Salary (เงินเดือน)",
+        "Debt (หนี้)",
+        "No Spend",
         "Other (อื่นๆ)",
     ];
+
+    const incomeCategories = [
+        "Salary (เงินเดือน)",
+        "Bonus (โบนัส)",
+        "Freelance (ฟรีแลนซ์)",
+        "Other (อื่นๆ)",
+    ];
+
+    function getCategoriesByType(targetType: "income" | "expense") {
+        return targetType === "income" ? incomeCategories : expenseCategories;
+    }
+
+    let categories = getCategoriesByType(type);
+    $: categories = getCategoriesByType(type);
+
+    let incomeAllocationPreview: JarAllocation[] = [];
+    $: incomeAllocationPreview =
+        type === "income" && amount && amount > 0 ? getJarAllocations(amount) : [];
 
     let customCategory = "";
 
@@ -53,7 +74,8 @@
                 currentImagePath = data.image_path;
 
                 // Handle category
-                if (categories.includes(data.category)) {
+                const availableCategories = getCategoriesByType(data.type);
+                if (availableCategories.includes(data.category)) {
                     category = data.category;
                 } else {
                     category = "Other (อื่นๆ)";
@@ -73,6 +95,14 @@
             date = new Date().toISOString().split("T")[0];
         }
     });
+
+    $: if (category && !categories.includes(category)) {
+        category = "";
+    }
+
+    $: if (!category.startsWith("Other")) {
+        customCategory = "";
+    }
 
     async function handleSubmit() {
         // Use custom category if 'Other' is selected
@@ -237,6 +267,32 @@
                 placeholder="0.00"
             />
         </div>
+
+        {#if type === "income" && incomeAllocationPreview.length > 0}
+            <div class="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+                <h3 class="font-bold text-emerald-800 mb-1">
+                    Auto-Allocation 4 กระปุก
+                </h3>
+                <p class="text-xs text-emerald-700 mb-3">
+                    ระบบแนะนำการแบ่งรายรับทันทีตามสัดส่วน 40/20/20/20
+                </p>
+                <div class="grid grid-cols-2 gap-2">
+                    {#each incomeAllocationPreview as jar}
+                        <div class="bg-white rounded-lg p-3 border border-emerald-100">
+                            <div class="text-[11px] text-slate-500">
+                                {jar.label} ({Math.round(jar.percent * 100)}%)
+                            </div>
+                            <div class="font-bold text-slate-800 text-sm">
+                                ฿{jar.amount.toLocaleString()}
+                            </div>
+                            <div class="text-[11px] text-slate-500">
+                                {jar.labelTh}
+                            </div>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+        {/if}
 
         <!-- Category -->
         <div>

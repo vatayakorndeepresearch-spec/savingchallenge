@@ -1,13 +1,14 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import { supabase } from "$lib/supabaseClient";
-    import {
-        PieChart,
-        TrendingUp,
-        TrendingDown,
-        PiggyBank,
-    } from "lucide-svelte";
+    import { PieChart, PiggyBank } from "lucide-svelte";
     import { currentUser } from "$lib/userStore";
+    import {
+        getJarAllocations,
+        inferJarFromCategory,
+        type JarAllocation,
+        type JarKey,
+    } from "$lib/jars";
 
     let loading = true;
     let totalIncome = 0;
@@ -18,6 +19,8 @@
         amount: number;
         count: number;
     }[] = [];
+    type JarAnalytics = JarAllocation & { actual: number; progress: number };
+    let jarBreakdown: JarAnalytics[] = [];
     let insight = "";
 
     const today = new Date();
@@ -30,6 +33,15 @@
 
     async function loadData() {
         loading = true;
+        totalIncome = 0;
+        totalExpense = 0;
+        totalLuxury = 0;
+        categoryBreakdown = [];
+        jarBreakdown = getJarAllocations(0).map((jar) => ({
+            ...jar,
+            actual: 0,
+            progress: 0,
+        }));
         const startOfMonth = new Date(
             currentYear,
             currentMonth - 1,
@@ -60,7 +72,11 @@
             totalExpense = expenses.reduce((sum, t) => sum + t.amount, 0);
             totalIncome = incomes.reduce((sum, t) => sum + t.amount, 0);
             totalLuxury = expenses
-                .filter((t) => t.category.toLowerCase() === "luxury")
+                .filter(
+                    (t) =>
+                        t.category.toLowerCase().includes("luxury") ||
+                        t.category.includes("ฟุ่มเฟือย"),
+                )
                 .reduce((sum, t) => sum + t.amount, 0);
 
             // Group by category
@@ -82,6 +98,29 @@
             categoryBreakdown = Array.from(breakdownMap.entries())
                 .map(([category, data]) => ({ category, ...data }))
                 .sort((a, b) => b.amount - a.amount);
+
+            const actualByJar: Record<JarKey, number> = {
+                expense: 0,
+                saving: 0,
+                investment: 0,
+                debt: 0,
+            };
+
+            expenses.forEach((tx) => {
+                const detectedJar = inferJarFromCategory(tx.category);
+                if (detectedJar) {
+                    actualByJar[detectedJar] += tx.amount;
+                } else {
+                    actualByJar.expense += tx.amount;
+                }
+            });
+
+            jarBreakdown = getJarAllocations(totalIncome).map((jar) => ({
+                ...jar,
+                actual: actualByJar[jar.key],
+                progress:
+                    jar.amount > 0 ? (actualByJar[jar.key] / jar.amount) * 100 : 0,
+            }));
 
             // Generate Insight
             const luxuryRatio =
@@ -135,6 +174,35 @@
                           ).toFixed(1)
                         : 0}%
                 </div>
+            </div>
+        </div>
+
+        <!-- 4-Jar Progress -->
+        <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-4">
+            <h3 class="font-bold text-slate-700 flex items-center gap-2 mb-3">
+                <PiggyBank size={18} class="text-emerald-600" />
+                แผน 4 กระปุก (รายรับเดือนนี้)
+            </h3>
+            <div class="space-y-3">
+                {#each jarBreakdown as jar}
+                    <div>
+                        <div class="flex justify-between text-xs mb-1">
+                            <span class="text-slate-600"
+                                >{jar.label} ({Math.round(jar.percent * 100)}%)
+                                - {jar.labelTh}</span
+                            >
+                            <span class="text-slate-700 font-medium">
+                                ฿{jar.actual.toLocaleString()} / ฿{jar.amount.toLocaleString()}
+                            </span>
+                        </div>
+                        <div class="h-2 bg-slate-100 rounded overflow-hidden">
+                            <div
+                                class="h-2 bg-emerald-500"
+                                style="width: {Math.min(100, Math.max(0, jar.progress))}%"
+                            ></div>
+                        </div>
+                    </div>
+                {/each}
             </div>
         </div>
 

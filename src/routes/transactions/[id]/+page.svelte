@@ -5,11 +5,18 @@
     import { format } from "date-fns";
     import { ArrowLeft, Gem, Trash2, Pencil } from "lucide-svelte";
     import { goto } from "$app/navigation";
+    import { getJarAllocations, type JarAllocation } from "$lib/jars";
 
     const { id } = $page.params;
     let transaction: any = null;
     let loading = true;
     let imageUrl: string | null = null;
+    let incomeAllocations: JarAllocation[] = [];
+
+    $: incomeAllocations =
+        transaction?.type === "income"
+            ? getJarAllocations(Number(transaction.amount) || 0)
+            : [];
 
     async function handleDelete() {
         if (!confirm("คุณแน่ใจหรือไม่ที่จะลบรายการนี้?")) return;
@@ -97,7 +104,7 @@
                         <h1 class="text-2xl font-bold text-slate-800">
                             {transaction.category}
                         </h1>
-                        {#if transaction.category.toLowerCase() === "luxury"}
+                        {#if transaction.category.toLowerCase().includes("luxury") || transaction.category.includes("ฟุ่มเฟือย")}
                             <span
                                 class="inline-flex items-center gap-1 text-purple-600 text-sm mt-1"
                             >
@@ -125,6 +132,30 @@
                         class="mt-4 p-4 bg-slate-50 rounded-lg text-slate-700 text-sm"
                     >
                         {transaction.note}
+                    </div>
+                {/if}
+
+                {#if incomeAllocations.length > 0}
+                    <div class="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+                        <div class="font-bold text-emerald-800 mb-2">
+                            Auto-Allocation (40/20/20/20)
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            {#each incomeAllocations as jar}
+                                <div
+                                    class="rounded-lg border border-emerald-100 bg-white p-2"
+                                >
+                                    <div class="text-[11px] text-slate-500">
+                                        {jar.label} ({Math.round(
+                                            jar.percent * 100,
+                                        )}%)
+                                    </div>
+                                    <div class="font-bold text-sm text-slate-800">
+                                        ฿{jar.amount.toLocaleString()}
+                                    </div>
+                                </div>
+                            {/each}
+                        </div>
                     </div>
                 {/if}
             </div>

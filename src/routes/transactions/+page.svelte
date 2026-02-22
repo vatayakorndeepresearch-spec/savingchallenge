@@ -90,7 +90,7 @@
                                     class="font-medium text-slate-800 flex items-center gap-2"
                                 >
                                     {tx.category}
-                                    {#if tx.category.toLowerCase() === "luxury"}
+                                    {#if tx.category.toLowerCase().includes("luxury") || tx.category.includes("ฟุ่มเฟือย")}
                                         <span
                                             class="bg-purple-100 text-purple-600 text-xs px-2 py-0.5 rounded-full flex items-center gap-1"
                                         >
