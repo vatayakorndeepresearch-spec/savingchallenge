@@ -20,6 +20,34 @@ function normalizeConfidence(value: number | null | undefined): number | null {
     return Math.max(0, Math.min(100, Math.round((value + Number.EPSILON) * 100) / 100));
 }
 
+function toIsoDate(year: number, month: number, day: number): string | null {
+    if (
+        !Number.isInteger(year) ||
+        !Number.isInteger(month) ||
+        !Number.isInteger(day) ||
+        year < 2000 ||
+        year > 2100 ||
+        month < 1 ||
+        month > 12 ||
+        day < 1 ||
+        day > 31
+    ) {
+        return null;
+    }
+
+    const utc = new Date(Date.UTC(year, month - 1, day));
+    if (
+        utc.getUTCFullYear() !== year ||
+        utc.getUTCMonth() !== month - 1 ||
+        utc.getUTCDate() !== day
+    ) {
+        return null;
+    }
+
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${year}-${pad(month)}-${pad(day)}`;
+}
+
 function parseAmount(lines: string[]): number | null {
     // SharePay logic: prefer explicit "จำนวน" line first
     for (let i = 0; i < lines.length; i++) {
@@ -150,10 +178,8 @@ function parseDate(lines: string[]): string | null {
             if (y > 2500) y -= 543;
             else if (y < 100) y = y > 40 ? 2500 + y - 543 : 2000 + y;
 
-            if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 2000 && y <= 2100) {
-                const pad = (n: number) => String(n).padStart(2, "0");
-                return `${y}-${pad(m)}-${pad(d)}`;
-            }
+            const iso = toIsoDate(y, m, d);
+            if (iso) return iso;
         }
 
         return null;
@@ -176,10 +202,7 @@ function parseDate(lines: string[]): string | null {
         if (y > 2500) y -= 543;
         else if (y < 100) y = y > 40 ? 2500 + y - 543 : 2000 + y;
 
-        if (d < 1 || d > 31 || m < 1 || m > 12 || y < 2000 || y > 2100) return null;
-
-        const pad = (n: number) => String(n).padStart(2, "0");
-        return `${y}-${pad(m)}-${pad(d)}`;
+        return toIsoDate(y, m, d);
     }
 
     const day = Number.parseInt(fullMatch[1], 10);
@@ -232,8 +255,7 @@ function parseDate(lines: string[]): string | null {
 
     if (finalYear < 2000 || finalYear > 2100) return null;
 
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${finalYear}-${pad(month)}-${pad(day)}`;
+    return toIsoDate(finalYear, month, day);
 }
 
 function parseNote(lines: string[]): string {

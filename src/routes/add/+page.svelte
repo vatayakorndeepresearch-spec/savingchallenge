@@ -57,6 +57,8 @@
     let supportsOcrColumns: boolean | null = null;
 
     const MAX_OCR_RAW_TEXT_LENGTH = 12000;
+    const OCR_METADATA_WARNING_MESSAGE =
+        "บันทึกสำเร็จ แต่ฐานข้อมูลยังไม่รองรับข้อมูล OCR จึงบันทึกเฉพาะรายการและรูปภาพ (แนะนำรัน add_ocr_metadata.sql)";
 
     onMount(async () => {
         transactionId = $page.url.searchParams.get("id");
@@ -155,17 +157,9 @@
     }
 
     function normalizeOcrRawText(value: string | null): string | null {
-        const text =
-            typeof value === "string"
-                ? value
-                      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
-                      .replace(/[\uD800-\uDFFF]/g, "")
-                      .trim()
-                : "";
+        const text = sanitizeDbText(value, MAX_OCR_RAW_TEXT_LENGTH);
         if (!text) return null;
-        return text.length > MAX_OCR_RAW_TEXT_LENGTH
-            ? text.slice(0, MAX_OCR_RAW_TEXT_LENGTH)
-            : text;
+        return text;
     }
 
     function normalizeOcrConfidence(value: number | null): number | null {
@@ -174,9 +168,45 @@
         return Math.round((clamped + Number.EPSILON) * 100) / 100;
     }
 
+    function sanitizeDbText(value: unknown, maxLength = 2000): string {
+        const normalized =
+            typeof value === "string"
+                ? value
+                      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+                      .replace(/[\uD800-\uDFFF]/g, "")
+                      .replace(/\s+/g, " ")
+                      .trim()
+                : "";
+        if (!normalized) return "";
+        return normalized.length > maxLength
+            ? normalized.slice(0, maxLength).trim()
+            : normalized;
+    }
+
     function isOcrMetadataError(message: string): boolean {
         const lowered = message.toLowerCase();
         return lowered.includes("ocr_raw_text") || lowered.includes("ocr_confidence");
+    }
+
+    function isValidIsoDate(value: string): boolean {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+        const [yearRaw, monthRaw, dayRaw] = value.split("-");
+        const year = Number.parseInt(yearRaw, 10);
+        const month = Number.parseInt(monthRaw, 10);
+        const day = Number.parseInt(dayRaw, 10);
+        if (
+            !Number.isInteger(year) ||
+            !Number.isInteger(month) ||
+            !Number.isInteger(day)
+        ) {
+            return false;
+        }
+        const utc = new Date(Date.UTC(year, month - 1, day));
+        return (
+            utc.getUTCFullYear() === year &&
+            utc.getUTCMonth() === month - 1 &&
+            utc.getUTCDate() === day
+        );
     }
 
     async function writeTransactionWithOptionalOcrColumns(
@@ -186,6 +216,7 @@
     ) {
         const hasOcrMetadata = Object.keys(optionalOcrPayload).length > 0;
         let includeOcrMetadata = supportsOcrColumns !== false && hasOcrMetadata;
+        let ocrMetadataDropped = hasOcrMetadata && !includeOcrMetadata;
 
         const runWrite = async (payload: Record<string, unknown>) => {
             if (isEditMode && transactionId) {
@@ -209,7 +240,10 @@
 
         if (!error && includeOcrMetadata) {
             supportsOcrColumns = true;
-            return null;
+            return {
+                error: null,
+                ocrMetadataDropped: false,
+            };
         }
 
         const message =
@@ -220,14 +254,19 @@
         if (error && includeOcrMetadata && isOcrMetadataError(message)) {
             supportsOcrColumns = false;
             includeOcrMetadata = false;
+            ocrMetadataDropped = hasOcrMetadata;
             error = await runWrite(basePayload);
         }
 
         if (!error && hasOcrMetadata && includeOcrMetadata === false) {
             supportsOcrColumns = false;
+            ocrMetadataDropped = true;
         }
 
-        return error;
+        return {
+            error,
+            ocrMetadataDropped,
+        };
     }
 
     async function handleSubmit() {
@@ -236,10 +275,33 @@
             category.startsWith("Other") && customCategory
                 ? customCategory
                 : category;
-        const jar_key: JarKey | null =
-            type === "expense" ? resolveJarForExpenseCategory(finalCategory) : null;
+        let sanitizedCategory = sanitizeDbText(finalCategory, 120);
+        const sanitizedNote = sanitizeDbText(note, 4000);
+        const normalizedDate = String(date || "").trim();
 
-        if (!amount || !finalCategory) return;
+        if (category.trim() === "") {
+            category = "Other (อื่นๆ)";
+            sanitizedCategory = "Other (อื่นๆ)";
+        }
+
+        if (!amount || !Number.isFinite(amount) || amount <= 0) {
+            alert("กรุณาระบุจำนวนเงินมากกว่า 0");
+            return;
+        }
+        if (!sanitizedCategory) {
+            alert("กรุณาเลือกหมวดหมู่");
+            return;
+        }
+        if (!isValidIsoDate(normalizedDate)) {
+            alert("วันที่ไม่ถูกต้อง กรุณาเลือกวันที่ใหม่อีกครั้ง");
+            return;
+        }
+
+        const jar_key: JarKey | null =
+            type === "expense"
+                ? resolveJarForExpenseCategory(sanitizedCategory || finalCategory)
+                : null;
+
         loading = true;
         let ownerForWrite: string;
         try {
@@ -278,9 +340,9 @@
         const basePayload = {
             type,
             amount,
-            category: finalCategory,
-            date,
-            note,
+            category: sanitizedCategory,
+            date: normalizedDate,
+            note: sanitizedNote || null,
             image_path,
             jar_key,
             owner: ownerForWrite,
@@ -293,7 +355,7 @@
             optionalOcrPayload.ocr_confidence = normalizedConfidence;
         }
 
-        const error = await writeTransactionWithOptionalOcrColumns(
+        const { error, ocrMetadataDropped } = await writeTransactionWithOptionalOcrColumns(
             basePayload,
             optionalOcrPayload,
             ownerForWrite,
@@ -312,6 +374,9 @@
                     : "Failed to save transaction",
             );
         } else {
+            if (ocrMetadataDropped) {
+                alert(OCR_METADATA_WARNING_MESSAGE);
+            }
             const shouldCleanupPreviousReceipt =
                 isEditMode &&
                 uploadedImagePath &&

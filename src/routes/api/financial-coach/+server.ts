@@ -68,11 +68,162 @@ function normalizeConfidence(input: unknown): number {
     return Math.max(0, Math.min(1, parsed));
 }
 
-function cleanJsonPayload(raw: string): string {
-    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    const base = fenced ? fenced[1] : raw;
-    const jsonLike = base.match(/\{[\s\S]*\}/);
-    return (jsonLike ? jsonLike[0] : base).trim();
+function stripReasoningArtifacts(input: string): string {
+    return input
+        .replace(/<think>[\s\S]*?<\/think>/gi, "")
+        .replace(/<\/?think>/gi, "")
+        .trim();
+}
+
+function sanitizeLooseJsonText(input: string): string {
+    return input
+        .replace(/^\uFEFF/, "")
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, "'")
+        .replace(/,\s*([}\]])/g, "$1")
+        .trim();
+}
+
+function closeTruncatedJson(input: string): string {
+    let text = input.trim();
+    if (!text) return text;
+
+    const first = text[0];
+    if (first !== "{" && first !== "[") return text;
+
+    const closers: string[] = [];
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch === "\\") {
+                escaped = true;
+                continue;
+            }
+            if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+
+        if (ch === '"') {
+            inString = true;
+            continue;
+        }
+        if (ch === "{") {
+            closers.push("}");
+            continue;
+        }
+        if (ch === "[") {
+            closers.push("]");
+            continue;
+        }
+        if ((ch === "}" || ch === "]") && closers.length > 0) {
+            const expected = closers[closers.length - 1];
+            if (ch === expected) {
+                closers.pop();
+            }
+        }
+    }
+
+    if (escaped && text.endsWith("\\")) {
+        text = text.slice(0, -1);
+    }
+    if (inString) {
+        text += '"';
+    }
+    for (let i = closers.length - 1; i >= 0; i -= 1) {
+        text += closers[i];
+    }
+    return text;
+}
+
+function collectJsonObjectCandidates(input: string): string[] {
+    const candidates: string[] = [];
+    const fencedMatches = input.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi);
+    for (const match of fencedMatches) {
+        const block = String(match[1] || "").trim();
+        if (block) candidates.push(block);
+    }
+
+    let depth = 0;
+    let start = -1;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < input.length; i += 1) {
+        const ch = input[i];
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch === "\\") {
+                escaped = true;
+                continue;
+            }
+            if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+
+        if (ch === '"') {
+            inString = true;
+            continue;
+        }
+        if (ch === "{") {
+            if (depth === 0) start = i;
+            depth += 1;
+            continue;
+        }
+        if (ch === "}" && depth > 0) {
+            depth -= 1;
+            if (depth === 0 && start >= 0) {
+                candidates.push(input.slice(start, i + 1).trim());
+                start = -1;
+            }
+        }
+    }
+
+    const deduped = Array.from(new Set(candidates.filter(Boolean)));
+    return deduped;
+}
+
+function parseModelJsonObject(raw: string): Record<string, unknown> {
+    const cleaned = stripReasoningArtifacts(raw);
+    const candidates = collectJsonObjectCandidates(cleaned);
+    if (cleaned) {
+        candidates.push(cleaned);
+    }
+
+    for (const candidate of candidates) {
+        const normalized = sanitizeLooseJsonText(candidate);
+        const repaired = sanitizeLooseJsonText(closeTruncatedJson(normalized));
+        const variants = Array.from(
+            new Set([candidate, normalized, repaired].filter(Boolean)),
+        );
+        for (const variant of variants) {
+            try {
+                const parsed = JSON.parse(variant);
+                if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                    return parsed as Record<string, unknown>;
+                }
+            } catch {
+                // try next candidate variant
+            }
+        }
+    }
+
+    const preview = cleaned.slice(0, 160).replace(/\s+/g, " ");
+    throw new Error(`MiniMax returned non-JSON content: ${preview}`);
 }
 
 function normalizePriority(input: unknown): Priority {
@@ -252,8 +403,10 @@ Rules:
 - Focus on habit improvements from provided monthly data.
 - Give concrete actions (numbers/limits/frequency).
 - Include jar_key whenever possible for quick action routing.
-- Max 4 recommendations.
-- No markdown.`;
+- Max 3 recommendations.
+- Keep summary <= 140 Thai characters.
+- Keep each action <= 120 Thai characters.
+- Output ONE compact JSON object only (single line), no markdown, no extra text.`;
 
     const userPrompt = JSON.stringify(
         {
@@ -273,7 +426,7 @@ Rules:
     );
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 18000);
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
 
     try {
         const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -288,8 +441,8 @@ Rules:
                     { role: "system", content: systemPrompt },
                     { role: "user", content: userPrompt },
                 ],
-                temperature: 0.2,
-                max_tokens: 500,
+                temperature: 0.1,
+                max_tokens: 900,
             }),
             signal: controller.signal,
         });
@@ -301,7 +454,7 @@ Rules:
 
         const data = await response.json();
         const content = extractModelContent(data);
-        const parsed = JSON.parse(cleanJsonPayload(content));
+        const parsed = parseModelJsonObject(content);
 
         const recommendations = normalizeRecommendations(parsed?.recommendations);
         const summary = String(parsed?.summary || "").trim();
@@ -319,6 +472,19 @@ Rules:
     } finally {
         clearTimeout(timeoutId);
     }
+}
+
+function toErrorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    return String(error ?? "");
+}
+
+function isExpectedMiniMaxFallbackError(error: unknown): boolean {
+    const message = toErrorMessage(error).toLowerCase();
+    if (message.includes("aborterror")) return true;
+    if (message.includes("non-json content")) return true;
+    if (message.includes("incomplete recommendation payload")) return true;
+    return false;
 }
 
 async function ensureAuthorizedAiRequest(
@@ -398,7 +564,13 @@ export async function POST({ request, cookies }) {
         const result = await coachWithMiniMax(normalizedPayload);
         return json(result);
     } catch (error) {
-        console.error("MiniMax financial coach failed, fallback:", error);
+        if (isExpectedMiniMaxFallbackError(error)) {
+            console.warn(
+                `MiniMax financial coach fallback: ${toErrorMessage(error)}`,
+            );
+        } else {
+            console.error("MiniMax financial coach failed, fallback:", error);
+        }
         return json(fallbackCoach(normalizedPayload));
     }
 }

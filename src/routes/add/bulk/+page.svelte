@@ -61,6 +61,7 @@
         aiConfidence: number | null;
         aiSource: AiSource;
         saveError: string;
+        saveWarning: string;
         savedId: number | null;
     };
 
@@ -68,6 +69,8 @@
     const MAX_FILE_SIZE_BYTES = 8 * 1024 * 1024;
     const SAVE_CONCURRENCY = 3;
     const MAX_OCR_RAW_TEXT_LENGTH = 12000;
+    const OCR_METADATA_WARNING_MESSAGE =
+        "บันทึกได้ แต่ฐานข้อมูลยังไม่รองรับข้อมูล OCR จึงข้าม metadata OCR";
 
     let items: BulkItem[] = [];
     let selectedPreview: string | null = null;
@@ -135,6 +138,7 @@
             aiConfidence: null,
             aiSource: null,
             saveError: "",
+            saveWarning: "",
             savedId: null,
         };
     }
@@ -238,6 +242,7 @@
             ocrProgress: 0,
             ocrError: "",
             saveError: "",
+            saveWarning: "",
             aiMessage: "",
         }));
 
@@ -347,6 +352,21 @@
         return item.category.trim();
     }
 
+    function sanitizeDbText(value: unknown, maxLength = 2000): string {
+        const normalized =
+            typeof value === "string"
+                ? value
+                      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+                      .replace(/[\uD800-\uDFFF]/g, "")
+                      .replace(/\s+/g, " ")
+                      .trim()
+                : "";
+        if (!normalized) return "";
+        return normalized.length > maxLength
+            ? normalized.slice(0, maxLength).trim()
+            : normalized;
+    }
+
     function validateItem(item: BulkItem): string | null {
         if (!item.amount || !Number.isFinite(item.amount) || item.amount <= 0) {
             return "จำนวนเงินต้องมากกว่า 0";
@@ -356,7 +376,7 @@
             return "กรุณาเลือกวันที่";
         }
 
-        const finalCategory = getFinalCategory(item);
+        const finalCategory = sanitizeDbText(getFinalCategory(item), 120);
         if (!finalCategory) {
             return "กรุณาเลือกหรือระบุหมวดหมู่";
         }
@@ -482,17 +502,9 @@
     }
 
     function normalizeOcrRawText(value: string | null): string | null {
-        const text =
-            typeof value === "string"
-                ? value
-                      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
-                      .replace(/[\uD800-\uDFFF]/g, "")
-                      .trim()
-                : "";
+        const text = sanitizeDbText(value, MAX_OCR_RAW_TEXT_LENGTH);
         if (!text) return null;
-        return text.length > MAX_OCR_RAW_TEXT_LENGTH
-            ? text.slice(0, MAX_OCR_RAW_TEXT_LENGTH)
-            : text;
+        return text;
     }
 
     function normalizeOcrConfidence(value: number | null): number | null {
@@ -513,7 +525,7 @@
         basePayload: Record<string, unknown>,
         optionalBatchPayload: Record<string, unknown>,
         optionalOcrPayload: Record<string, unknown>,
-    ): Promise<{ id: number | null; error: Error | null }> {
+    ): Promise<{ id: number | null; error: Error | null; ocrMetadataDropped: boolean }> {
         const runInsert = async (payload: Record<string, unknown>) => {
             const { data, error } = await supabase
                 .from("transactions")
@@ -537,6 +549,7 @@
 
         let includeBatchOptional = supportsBatchColumns !== false && hasBatchOptional;
         let includeOcrOptional = supportsOcrColumns !== false && hasOcrOptional;
+        let ocrMetadataDropped = hasOcrOptional && !includeOcrOptional;
 
         for (let attempt = 0; attempt < 3; attempt += 1) {
             const payload = {
@@ -548,7 +561,10 @@
             if (!result.error) {
                 supportsBatchColumns = includeBatchOptional;
                 supportsOcrColumns = includeOcrOptional;
-                return result;
+                return {
+                    ...result,
+                    ocrMetadataDropped,
+                };
             }
 
             const message = String(result.error.message || "").toLowerCase();
@@ -561,19 +577,27 @@
             if (includeOcrOptional && hasOcrMetadataError(message)) {
                 includeOcrOptional = false;
                 supportsOcrColumns = false;
+                ocrMetadataDropped = hasOcrOptional;
                 continue;
             }
 
-            return result;
+            return {
+                ...result,
+                ocrMetadataDropped,
+            };
         }
 
-        return { id: null, error: new Error("Insert failed after fallback attempts") };
+        return {
+            id: null,
+            error: new Error("Insert failed after fallback attempts"),
+            ocrMetadataDropped,
+        };
     }
 
     async function saveSingleItem(itemId: string, owner: string, batchId: string) {
         const current = findItem(itemId);
         if (!current || current.status === "saved") {
-            return { ok: false, skipped: true };
+            return { ok: false, skipped: true, ocrMetadataDropped: false };
         }
 
         const validationError = validateItem(current);
@@ -582,20 +606,23 @@
                 ...entry,
                 status: "save_error",
                 saveError: validationError,
+                saveWarning: "",
             }));
-            return { ok: false, skipped: false };
+            return { ok: false, skipped: false, ocrMetadataDropped: false };
         }
 
         updateItem(itemId, (entry) => ({
             ...entry,
             status: "saving",
             saveError: "",
+            saveWarning: "",
         }));
 
         let imagePath: string | null = null;
         try {
             imagePath = await uploadReceipt(owner, current.file);
-            const finalCategory = getFinalCategory(current);
+            const finalCategory = sanitizeDbText(getFinalCategory(current), 120);
+            const sanitizedNote = sanitizeDbText(current.note, 4000);
             const jarKey: JarKey | null =
                 current.type === "expense"
                     ? resolveJarForExpenseCategory(finalCategory)
@@ -606,7 +633,7 @@
                 amount: current.amount,
                 category: finalCategory,
                 date: current.date,
-                note: current.note || null,
+                note: sanitizedNote || null,
                 image_path: imagePath,
                 jar_key: jarKey,
                 owner,
@@ -642,9 +669,16 @@
                 ...entry,
                 status: "saved",
                 saveError: "",
+                saveWarning: inserted.ocrMetadataDropped
+                    ? OCR_METADATA_WARNING_MESSAGE
+                    : "",
                 savedId: inserted.id,
             }));
-            return { ok: true, skipped: false };
+            return {
+                ok: true,
+                skipped: false,
+                ocrMetadataDropped: inserted.ocrMetadataDropped,
+            };
         } catch (error) {
             await cleanupReceiptUpload(imagePath);
             const message =
@@ -656,8 +690,9 @@
                 ...entry,
                 status: "save_error",
                 saveError: message,
+                saveWarning: "",
             }));
-            return { ok: false, skipped: false };
+            return { ok: false, skipped: false, ocrMetadataDropped: false };
         }
     }
 
@@ -666,6 +701,7 @@
         let successCount = 0;
         let failCount = 0;
         let skipCount = 0;
+        let ocrDroppedCount = 0;
 
         const worker = async () => {
             while (cursor < itemIds.length) {
@@ -676,6 +712,9 @@
                     skipCount += 1;
                 } else if (result.ok) {
                     successCount += 1;
+                    if (result.ocrMetadataDropped) {
+                        ocrDroppedCount += 1;
+                    }
                 } else {
                     failCount += 1;
                 }
@@ -688,7 +727,7 @@
         );
         await Promise.all(runners);
 
-        return { successCount, failCount, skipCount };
+        return { successCount, failCount, skipCount, ocrDroppedCount };
     }
 
     async function saveAllItems() {
@@ -710,13 +749,16 @@
             .filter((item) => item.status !== "saved")
             .map((item) => item.id);
 
-        const { successCount, failCount, skipCount } = await runSavePool(
+        const { successCount, failCount, skipCount, ocrDroppedCount } = await runSavePool(
             owner,
             pendingIds,
             batchId,
         );
 
         batchSummary = `บันทึกสำเร็จ ${successCount} รายการ • ไม่สำเร็จ ${failCount} รายการ • ข้าม ${skipCount} รายการ`;
+        if (ocrDroppedCount > 0) {
+            batchSummary += ` • ข้าม OCR metadata ${ocrDroppedCount} รายการ`;
+        }
         savingAll = false;
     }
 
@@ -899,6 +941,9 @@
 
                                 {#if item.saveError}
                                     <div class="mt-1 text-[11px] text-rose-600">{item.saveError}</div>
+                                {/if}
+                                {#if item.saveWarning}
+                                    <div class="mt-1 text-[11px] text-amber-700">{item.saveWarning}</div>
                                 {/if}
                                 {#if item.ocrError}
                                     <div class="mt-1 text-[11px] text-rose-600">{item.ocrError}</div>

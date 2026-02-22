@@ -48,4 +48,26 @@ describe("parseSlipOcrText", () => {
         const parsed = parseSlipOcrText("Amount 100.00 THB");
         expect(parsed.confidence).toBeNull();
     });
+
+    it("rejects impossible calendar dates from OCR", () => {
+        const raw = `
+            โอนเงินสำเร็จ
+            จำนวนเงิน 500.00 บาท
+            วันที่ 31/02/2026
+        `;
+
+        const parsed = parseSlipOcrText(raw, 80);
+        expect(parsed.date).toBeNull();
+    });
+
+    it("keeps valid leap day date", () => {
+        const raw = `
+            โอนเงินสำเร็จ
+            จำนวนเงิน 500.00 บาท
+            วันที่ 29/02/2024
+        `;
+
+        const parsed = parseSlipOcrText(raw, 80);
+        expect(parsed.date).toBe("2024-02-29");
+    });
 });
