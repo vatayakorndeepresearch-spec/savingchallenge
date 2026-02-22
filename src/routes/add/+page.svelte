@@ -155,7 +155,13 @@
     }
 
     function normalizeOcrRawText(value: string | null): string | null {
-        const text = typeof value === "string" ? value.trim() : "";
+        const text =
+            typeof value === "string"
+                ? value
+                      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+                      .replace(/[\uD800-\uDFFF]/g, "")
+                      .trim()
+                : "";
         if (!text) return null;
         return text.length > MAX_OCR_RAW_TEXT_LENGTH
             ? text.slice(0, MAX_OCR_RAW_TEXT_LENGTH)

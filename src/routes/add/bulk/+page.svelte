@@ -79,6 +79,7 @@
 
     let supportsBatchColumns: boolean | null = null;
     let supportsOcrColumns: boolean | null = null;
+    $: unsavedCount = items.filter((item) => item.status !== "saved").length;
 
     function todayIso() {
         return new Date().toISOString().split("T")[0];
@@ -481,7 +482,13 @@
     }
 
     function normalizeOcrRawText(value: string | null): string | null {
-        const text = typeof value === "string" ? value.trim() : "";
+        const text =
+            typeof value === "string"
+                ? value
+                      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+                      .replace(/[\uD800-\uDFFF]/g, "")
+                      .trim()
+                : "";
         if (!text) return null;
         return text.length > MAX_OCR_RAW_TEXT_LENGTH
             ? text.slice(0, MAX_OCR_RAW_TEXT_LENGTH)
@@ -794,6 +801,21 @@
         <div class="flex flex-wrap items-center gap-2">
             <button
                 type="button"
+                on:click={saveAllItems}
+                disabled={savingAll || scanningBatch || classifyingAll || unsavedCount === 0}
+                class="inline-flex items-center gap-1 rounded-lg bg-pink-500 px-3 py-2 text-xs font-bold text-white hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                {#if savingAll}
+                    <Loader2 size={14} class="animate-spin" />
+                    กำลังบันทึก...
+                {:else}
+                    <Save size={14} />
+                    บันทึกหลายสลิป ({unsavedCount})
+                {/if}
+            </button>
+
+            <button
+                type="button"
                 on:click={classifyAll}
                 disabled={classifyingAll || savingAll}
                 class="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1065,7 +1087,7 @@
                 <button
                     type="button"
                     on:click={saveAllItems}
-                    disabled={savingAll || scanningBatch || classifyingAll || items.length === 0}
+                    disabled={savingAll || scanningBatch || classifyingAll || unsavedCount === 0}
                     class="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-pink-500 px-4 py-3 text-sm font-bold text-white hover:bg-pink-600 disabled:opacity-50"
                 >
                     {#if savingAll}
@@ -1073,7 +1095,7 @@
                         กำลังบันทึกทั้งหมด...
                     {:else}
                         <Save size={16} />
-                        บันทึกทั้งหมด ({items.length})
+                        บันทึกหลายสลิป ({unsavedCount})
                     {/if}
                 </button>
                 <button
