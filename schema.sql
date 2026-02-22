@@ -9,6 +9,8 @@ create table if not exists public.transactions (
   ocr_raw_text text,
   ocr_confidence numeric(5,2),
   image_path text,
+  batch_id text,
+  source_file_name text,
   date date not null,
   created_at timestamptz default now(),
   owner text default 'bear' -- Added owner column
@@ -123,4 +125,5 @@ create index if not exists idx_transactions_owner on public.transactions(owner);
 create index if not exists idx_transactions_date on public.transactions(date);
 create index if not exists idx_transactions_owner_date on public.transactions(owner, date);
 create index if not exists idx_transactions_owner_date_jar on public.transactions(owner, date, jar_key);
+create index if not exists idx_transactions_batch_id on public.transactions(batch_id);
 create index if not exists idx_budgets_owner_year_month on public.budgets(owner, year, month);

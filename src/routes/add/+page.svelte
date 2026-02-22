@@ -12,11 +12,16 @@
     import { runSlipOcr, type SlipOcrResult } from "$lib/slipOcr";
     import { resolveOwner } from "$lib/owner";
     import { getReceiptPreviewUrl } from "$lib/receiptUrl";
+    import {
+        getCategoriesByType,
+        getAiAllowedCategories,
+        type TransactionType,
+    } from "$lib/categories";
 
     import { page } from "$app/stores";
     import { onMount } from "svelte";
 
-    let type: "income" | "expense" = "expense";
+    let type: TransactionType = "expense";
     let amount: number | null = null;
     let category = "";
     let date = new Date().toISOString().split("T")[0];
@@ -26,33 +31,6 @@
     let isEditMode = false;
     let transactionId: string | null = null;
     let currentImagePath: string | null = null;
-
-    const expenseCategories = [
-        "Food (อาหาร)",
-        "Transport (เดินทาง)",
-        "Shopping (ช้อปปิ้ง)",
-        "Luxury (ฟุ่มเฟือย)",
-        "Bills (บิล/สาธารณูปโภค)",
-        "Health (สุขภาพ)",
-        "Entertainment (บันเทิง)",
-        "Donation (บริจาค)",
-        "Saving (ออม)",
-        "Investment (ลงทุน)",
-        "Debt (หนี้)",
-        "No Spend",
-        "Other (อื่นๆ)",
-    ];
-
-    const incomeCategories = [
-        "Salary (เงินเดือน)",
-        "Bonus (โบนัส)",
-        "Freelance (ฟรีแลนซ์)",
-        "Other (อื่นๆ)",
-    ];
-
-    function getCategoriesByType(targetType: "income" | "expense") {
-        return targetType === "income" ? incomeCategories : expenseCategories;
-    }
 
     let categories = getCategoriesByType(type);
     $: categories = getCategoriesByType(type);
@@ -156,10 +134,6 @@
 
     $: if (!category.startsWith("Other")) {
         customCategory = "";
-    }
-
-    function getAiAllowedCategories(targetType: "income" | "expense"): string[] {
-        return getCategoriesByType(targetType).filter((cat) => cat !== "No Spend");
     }
 
     async function resolveOwnerForWrite(): Promise<string> {
@@ -458,13 +432,21 @@
             {isEditMode ? "แก้ไขรายการ" : "บันทึกรายการใหม่"}
         </h2>
         {#if !isEditMode}
-            <button
-                type="button"
-                on:click={handleNoSpend}
-                class="text-xs bg-gradient-to-r from-yellow-400 to-orange-500 text-white px-3 py-1.5 rounded-full font-bold shadow-sm hover:shadow-md transition-all transform hover:scale-105 active:scale-95 flex items-center gap-1"
-            >
-                ✨ วันนี้ไม่ได้ใช้เงินเลย!
-            </button>
+            <div class="flex items-center gap-2">
+                <a
+                    href="/add/bulk"
+                    class="text-xs bg-blue-50 border border-blue-200 text-blue-700 px-3 py-1.5 rounded-full font-bold hover:bg-blue-100 transition-colors"
+                >
+                    อัปหลายสลิป
+                </a>
+                <button
+                    type="button"
+                    on:click={handleNoSpend}
+                    class="text-xs bg-gradient-to-r from-yellow-400 to-orange-500 text-white px-3 py-1.5 rounded-full font-bold shadow-sm hover:shadow-md transition-all transform hover:scale-105 active:scale-95 flex items-center gap-1"
+                >
+                    ✨ วันนี้ไม่ได้ใช้เงินเลย!
+                </button>
+            </div>
         {/if}
     </div>
 
@@ -609,9 +591,9 @@
                 >
                     {#if aiCategorizing}
                         <Loader2 size={12} class="animate-spin" />
-                        MiniMax กำลังวิเคราะห์...
+                        AI กำลังวิเคราะห์...
                     {:else}
-                        ใช้ MiniMax จัดหมวด
+                        ใช้ AI จัดหมวดหมู่
                     {/if}
                 </button>
 

@@ -74,9 +74,39 @@ function fallbackClassify(
                       reason: "พบคำว่าโบนัส",
                   },
                   {
-                      keywords: ["freelance", "ฟรีแลนซ์", "commission", "คอมมิชชั่น"],
+                      keywords: ["freelance", "ฟรีแลนซ์"],
                       categoryHints: ["freelance", "ฟรีแลนซ์"],
                       reason: "พบคำที่สื่อถึงงานพิเศษ/ฟรีแลนซ์",
+                  },
+                  {
+                      keywords: ["commission", "คอมมิชชั่น", "ค่าคอม"],
+                      categoryHints: ["commission", "คอมมิชชั่น"],
+                      reason: "พบคำที่สื่อว่าเป็นรายได้จากค่าคอมมิชชั่น",
+                  },
+                  {
+                      keywords: ["business", "ยอดขาย", "ขายสินค้า", "รายได้ร้าน"],
+                      categoryHints: ["business income", "ธุรกิจ"],
+                      reason: "พบคำที่สื่อว่าเป็นรายได้ธุรกิจ",
+                  },
+                  {
+                      keywords: ["interest", "ดอกเบี้ย", "dividend", "ปันผล"],
+                      categoryHints: ["interest", "dividend", "ดอกเบี้ย", "ปันผล"],
+                      reason: "พบคำที่สื่อว่าเป็นดอกเบี้ย/เงินปันผล",
+                  },
+                  {
+                      keywords: ["rent", "ค่าเช่า", "ปล่อยเช่า"],
+                      categoryHints: ["rental income", "ค่าเช่า"],
+                      reason: "พบคำที่สื่อว่าเป็นรายได้ค่าเช่า",
+                  },
+                  {
+                      keywords: ["refund", "คืนเงิน", "cashback", "แคชแบ็ก"],
+                      categoryHints: ["refund", "cashback", "คืนเงิน", "แคชแบ็ก"],
+                      reason: "พบคำที่สื่อว่าเป็นเงินคืน/แคชแบ็ก",
+                  },
+                  {
+                      keywords: ["gift", "ของขวัญ", "ช่วยเหลือ", "โอนให้"],
+                      categoryHints: ["gift", "support", "ของขวัญ", "สนับสนุน"],
+                      reason: "พบคำที่สื่อว่าเป็นของขวัญหรือเงินสนับสนุน",
                   },
               ]
             : [
@@ -86,9 +116,24 @@ function fallbackClassify(
                       reason: "พบคำเกี่ยวกับอาหาร",
                   },
                   {
+                      keywords: ["ซูเปอร์", "supermarket", "market", "ของใช้", "grocer"],
+                      categoryHints: ["groceries", "ของใช้ในบ้าน"],
+                      reason: "พบคำเกี่ยวกับของใช้ในบ้าน/ซูเปอร์มาร์เก็ต",
+                  },
+                  {
+                      keywords: ["กาแฟ", "coffee", "cafe", "คาเฟ่"],
+                      categoryHints: ["coffee", "กาแฟ"],
+                      reason: "พบคำเกี่ยวกับกาแฟ/คาเฟ่",
+                  },
+                  {
                       keywords: ["เดินทาง", "รถ", "น้ำมัน", "transport", "bts", "mrt"],
                       categoryHints: ["transport", "เดินทาง"],
                       reason: "พบคำเกี่ยวกับการเดินทาง",
+                  },
+                  {
+                      keywords: ["ค่าเช่า", "rent", "เช่าบ้าน", "คอนโด", "ผ่อนบ้าน", "mortgage"],
+                      categoryHints: ["housing", "ที่อยู่อาศัย"],
+                      reason: "พบคำเกี่ยวกับที่อยู่อาศัย",
                   },
                   {
                       keywords: ["ออม", "saving", "ฝาก"],
@@ -121,14 +166,64 @@ function fallbackClassify(
                       reason: "พบคำเกี่ยวกับบิล/สาธารณูปโภค",
                   },
                   {
+                      keywords: ["netflix", "spotify", "youtube", "subscription", "สมาชิก", "ซับ"],
+                      categoryHints: ["subscription", "สมาชิก", "ซับสคริปชัน"],
+                      reason: "พบคำเกี่ยวกับสมาชิก/ซับสคริปชัน",
+                  },
+                  {
                       keywords: ["ช้อป", "shopping", "ซื้อของ"],
                       categoryHints: ["shopping", "ช้อป"],
                       reason: "พบคำเกี่ยวกับการช้อปปิ้ง",
                   },
                   {
+                      keywords: ["เสริมสวย", "cosmetic", "beauty", "skincare", "makeup"],
+                      categoryHints: ["beauty", "ความงาม"],
+                      reason: "พบคำเกี่ยวกับความงาม",
+                  },
+                  {
                       keywords: ["หนัง", "เกม", "entertainment", "บันเทิง"],
                       categoryHints: ["entertainment", "บันเทิง"],
                       reason: "พบคำเกี่ยวกับความบันเทิง",
+                  },
+                  {
+                      keywords: ["เรียน", "tuition", "course", "คอร์ส", "หนังสือ", "school"],
+                      categoryHints: ["education", "การศึกษา"],
+                      reason: "พบคำเกี่ยวกับการศึกษา",
+                  },
+                  {
+                      keywords: ["เที่ยว", "hotel", "flight", "trip", "travel", "ทริป"],
+                      categoryHints: ["travel", "ท่องเที่ยว"],
+                      reason: "พบคำเกี่ยวกับการท่องเที่ยว",
+                  },
+                  {
+                      keywords: ["ลูก", "เด็ก", "baby", "family", "ครอบครัว"],
+                      categoryHints: ["family", "ครอบครัว"],
+                      reason: "พบคำเกี่ยวกับครอบครัว/ลูก",
+                  },
+                  {
+                      keywords: ["หมา", "แมว", "pet", "สัตว์เลี้ยง", "vet"],
+                      categoryHints: ["pet", "สัตว์เลี้ยง"],
+                      reason: "พบคำเกี่ยวกับสัตว์เลี้ยง",
+                  },
+                  {
+                      keywords: ["ประกัน", "insurance", "premium"],
+                      categoryHints: ["insurance", "ประกัน"],
+                      reason: "พบคำเกี่ยวกับประกัน",
+                  },
+                  {
+                      keywords: ["ภาษี", "tax"],
+                      categoryHints: ["tax", "ภาษี"],
+                      reason: "พบคำเกี่ยวกับภาษี",
+                  },
+                  {
+                      keywords: ["ประชุม", "office", "งาน", "business", "ลูกค้า"],
+                      categoryHints: ["business", "ธุรกิจ", "งาน"],
+                      reason: "พบคำเกี่ยวกับค่าใช้จ่ายด้านงาน/ธุรกิจ",
+                  },
+                  {
+                      keywords: ["ของขวัญ", "gift", "present"],
+                      categoryHints: ["gift", "ของขวัญ"],
+                      reason: "พบคำเกี่ยวกับของขวัญ",
                   },
               ];
 
