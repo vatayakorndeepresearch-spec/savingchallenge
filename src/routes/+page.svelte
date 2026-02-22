@@ -29,6 +29,50 @@
         progress: 0,
     }));
 
+    interface CategoryTotal {
+        category: string;
+        amount: number;
+        percent: number;
+        color: string;
+    }
+    let expenseByCategory: CategoryTotal[] = [];
+
+    const categoryColors = [
+        "#f43f5e", // rose-500
+        "#3b82f6", // blue-500
+        "#10b981", // emerald-500
+        "#f59e0b", // amber-500
+        "#8b5cf6", // violet-500
+        "#ec4899", // pink-500
+        "#06b6d4", // cyan-500
+        "#84cc16", // lime-500
+        "#6366f1", // indigo-500
+        "#f97316", // orange-500
+    ];
+
+    interface PieSegment {
+        d: string;
+        color: string;
+    }
+    let pieSegments: PieSegment[] = [];
+
+    function computePieSegments(categories: CategoryTotal[]): PieSegment[] {
+        let cumulativePercent = 0;
+        return categories.map((cat) => {
+            const startPercent = cumulativePercent;
+            cumulativePercent += cat.percent;
+            const x1 = Math.cos(2 * Math.PI * (startPercent / 100));
+            const y1 = Math.sin(2 * Math.PI * (startPercent / 100));
+            const x2 = Math.cos(2 * Math.PI * (cumulativePercent / 100));
+            const y2 = Math.sin(2 * Math.PI * (cumulativePercent / 100));
+            const largeArcFlag = cat.percent > 50 ? 1 : 0;
+            return {
+                d: `M 50 50 L ${50 + 40 * x1} ${50 + 40 * y1} A 40 40 0 ${largeArcFlag} 1 ${50 + 40 * x2} ${50 + 40 * y2} Z`,
+                color: cat.color,
+            };
+        });
+    }
+
     const jarStyles: Record<
         JarKey,
         { bg: string; border: string; text: string; bar: string }
@@ -172,6 +216,24 @@
                 score += 50;
             }
 
+            // Calculate Expense By Category
+            const catMap = new Map<string, number>();
+            expenses.forEach((tx) => {
+                const current = catMap.get(tx.category) || 0;
+                catMap.set(tx.category, current + tx.amount);
+            });
+
+            expenseByCategory = Array.from(catMap.entries())
+                .map(([category, amount], index) => ({
+                    category,
+                    amount,
+                    percent: totalExpense > 0 ? (amount / totalExpense) * 100 : 0,
+                    color: categoryColors[index % categoryColors.length],
+                }))
+                .sort((a, b) => b.amount - a.amount);
+
+            pieSegments = computePieSegments(expenseByCategory);
+
             // Generate Insight
             if (budgetAmount && totalExpense > budgetAmount * 0.8) {
                 insight =
@@ -294,61 +356,66 @@
         </div>
     </div>
 
-    <!-- Budget Status -->
+    <!-- Expense Breakdown -->
     <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
         <div class="flex justify-between items-center mb-4">
             <h3 class="font-bold text-slate-700 flex items-center gap-2">
                 <Wallet size={20} class="text-blue-500" />
-                งบประมาณเดือนนี้
+                ค่าใช้จ่ายเดือนนี้
             </h3>
-            <a
-                href="/budget"
-                class="text-sm text-pink-500 font-medium hover:underline"
-                >ตั้งงบ</a
-            >
         </div>
 
-        {#if budgetAmount}
-            <div class="relative pt-1">
-                <div class="flex mb-2 items-center justify-between">
-                    <div class="text-right">
-                        <span
-                            class="text-xs font-semibold inline-block text-slate-600"
-                        >
-                            ใช้ไป {Math.min(
-                                100,
-                                Math.round((totalExpense / budgetAmount) * 100),
-                            )}%
-                        </span>
+        {#if expenseByCategory.length > 0}
+            <div class="flex flex-col items-center">
+                <!-- SVG Pie Chart -->
+                <div class="relative w-48 h-48 mb-6">
+                    <svg viewBox="0 0 100 100" class="w-full h-full -rotate-90">
+                        {#each pieSegments as seg}
+                            <path d={seg.d} fill={seg.color} class="transition-all duration-300 hover:opacity-80" />
+                        {/each}
+                        <circle cx="50" cy="50" r="25" fill="white" />
+                    </svg>
+                    <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        {#if budgetAmount}
+                            <span class="text-2xl font-bold text-slate-800">{Math.round((totalExpense / budgetAmount) * 100)}%</span>
+                            <span class="text-[10px] text-slate-400 uppercase font-medium">ของงบ</span>
+                        {:else}
+                            <span class="text-lg font-bold text-slate-800">฿{totalExpense.toLocaleString()}</span>
+                            <span class="text-[10px] text-slate-400 uppercase font-medium">รายจ่าย</span>
+                        {/if}
                     </div>
                 </div>
-                <div
-                    class="overflow-hidden h-2 mb-4 text-xs flex rounded bg-slate-100"
-                >
-                    <div
-                        style="width: {Math.min(
-                            100,
-                            (totalExpense / budgetAmount) * 100,
-                        )}%"
-                        class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center {totalExpense >
-                        budgetAmount
-                            ? 'bg-rose-500'
-                            : 'bg-emerald-500'} transition-all duration-500"
-                    ></div>
+
+                <!-- Legend -->
+                <div class="w-full grid grid-cols-2 gap-x-4 gap-y-2">
+                    {#each expenseByCategory as cat}
+                        <div class="flex items-center justify-between text-xs py-1 border-b border-slate-50 last:border-0">
+                            <div class="flex items-center gap-2 truncate">
+                                <div class="w-2 h-2 rounded-full shrink-0" style="background-color: {cat.color}"></div>
+                                <span class="text-slate-600 truncate">{cat.category.split('(')[0].trim()}</span>
+                            </div>
+                            <span class="font-bold text-slate-800 ml-1">{cat.percent.toFixed(1)}%</span>
+                        </div>
+                    {/each}
                 </div>
-                <div class="flex justify-between text-sm">
-                    <span class="text-slate-500"
-                        >ใช้ไป: ฿{totalExpense.toLocaleString()}</span
-                    >
-                    <span class="font-medium text-slate-700"
-                        >งบ: ฿{budgetAmount.toLocaleString()}</span
-                    >
+
+                <div class="w-full mt-4 flex justify-between text-xs pt-3 border-t border-slate-100">
+                    <span class="text-slate-500">ใช้ไป: ฿{totalExpense.toLocaleString()}</span>
+                    {#if budgetAmount}
+                        <span class="font-medium text-slate-700">งบ: ฿{budgetAmount.toLocaleString()}</span>
+                    {/if}
                 </div>
             </div>
         {:else}
-            <p class="text-slate-500 text-sm text-center py-2">
-                ยังไม่ได้ตั้งงบประมาณ
-            </p>
+            <div class="text-center py-8">
+                <div class="text-slate-300 mb-2">
+                    <TrendingDown size={40} class="mx-auto opacity-20" />
+                </div>
+                <p class="text-slate-500 text-sm">ยังไม่มีค่าใช้จ่ายในเดือนนี้</p>
+                {#if budgetAmount}
+                    <div class="mt-2 text-xs text-slate-400">งบประมาณ: ฿{budgetAmount.toLocaleString()}</div>
+                {/if}
+            </div>
         {/if}
     </div>
 </div>

@@ -429,23 +429,31 @@ Rules:
     const timeoutId = setTimeout(() => controller.abort(), 25000);
 
     try {
-        const response = await fetch(`${baseUrl}/chat/completions`, {
-            method: "POST",
-            headers: {
-                "content-type": "application/json",
-                authorization: `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({
-                model,
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: userPrompt },
-                ],
-                temperature: 0.1,
-                max_tokens: 900,
-            }),
-            signal: controller.signal,
-        });
+        let response: Response;
+        try {
+            response = await fetch(`${baseUrl}/chat/completions`, {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    authorization: `Bearer ${apiKey}`,
+                },
+                body: JSON.stringify({
+                    model,
+                    messages: [
+                        { role: "system", content: systemPrompt },
+                        { role: "user", content: userPrompt },
+                    ],
+                    temperature: 0.1,
+                    max_tokens: 900,
+                }),
+                signal: controller.signal,
+            });
+        } catch (error) {
+            if (controller.signal.aborted) {
+                throw new Error("MiniMax request timed out");
+            }
+            throw error;
+        }
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -480,8 +488,15 @@ function toErrorMessage(error: unknown): string {
 }
 
 function isExpectedMiniMaxFallbackError(error: unknown): boolean {
+    const errorName =
+        error && typeof error === "object" && "name" in error
+            ? String(error.name ?? "").toLowerCase()
+            : "";
     const message = toErrorMessage(error).toLowerCase();
+    if (errorName === "aborterror" || errorName === "timeouterror") return true;
     if (message.includes("aborterror")) return true;
+    if (message.includes("operation was aborted")) return true;
+    if (message.includes("request timed out")) return true;
     if (message.includes("non-json content")) return true;
     if (message.includes("incomplete recommendation payload")) return true;
     return false;
