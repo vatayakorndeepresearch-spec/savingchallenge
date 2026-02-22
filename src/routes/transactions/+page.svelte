@@ -4,6 +4,7 @@
     import { format } from "date-fns";
     import { ChevronRight, Gem } from "lucide-svelte";
     import { currentUser } from "$lib/userStore";
+    import { resolveOwner } from "$lib/owner";
 
     let transactions: any[] = [];
     let loading = true;
@@ -29,13 +30,19 @@
             59,
             59,
         ).toISOString();
+        const { owner } = await resolveOwner(supabase, $currentUser);
+        if (!owner) {
+            transactions = [];
+            loading = false;
+            return;
+        }
 
         const { data, error } = await supabase
             .from("transactions")
             .select("*")
             .gte("date", startOfMonth)
             .lte("date", endOfMonth)
-            .eq("owner", $currentUser) // Filter by owner
+            .eq("owner", owner)
             .order("date", { ascending: false });
 
         if (error) console.error(error);

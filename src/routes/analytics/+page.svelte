@@ -2,6 +2,7 @@
     import { supabase } from "$lib/supabaseClient";
     import { PieChart, PiggyBank, ArrowUpRight } from "lucide-svelte";
     import { currentUser } from "$lib/userStore";
+    import { resolveOwner } from "$lib/owner";
     import {
         getJarAllocations,
         resolveJarForTransaction,
@@ -289,13 +290,19 @@
             59,
             59,
         ).toISOString();
+        const { owner } = await resolveOwner(supabase, $currentUser);
+        if (!owner) {
+            loading = false;
+            insight = "ยังไม่พบผู้ใช้ที่ใช้งานอยู่";
+            return;
+        }
 
         const { data: transactions, error } = await supabase
             .from("transactions")
             .select("*")
             .gte("date", startOfMonth)
             .lte("date", endOfMonth)
-            .eq("owner", $currentUser); // Filter by owner
+            .eq("owner", owner);
 
         if (error) console.error(error);
 

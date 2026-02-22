@@ -6,6 +6,9 @@
     import { ArrowLeft, Gem, Trash2, Pencil } from "lucide-svelte";
     import { goto } from "$app/navigation";
     import { getJarAllocations, type JarAllocation } from "$lib/jars";
+    import { currentUser } from "$lib/userStore";
+    import { resolveOwner } from "$lib/owner";
+    import { getReceiptPreviewUrl } from "$lib/receiptUrl";
 
     const { id } = $page.params;
     let transaction: any = null;
@@ -29,11 +32,17 @@
 
     async function handleDelete() {
         if (!confirm("คุณแน่ใจหรือไม่ที่จะลบรายการนี้?")) return;
+        const { owner } = await resolveOwner(supabase, $currentUser);
+        if (!owner) {
+            alert("ไม่สามารถระบุเจ้าของข้อมูลได้ กรุณาเข้าสู่ระบบใหม่");
+            return;
+        }
 
         const { error } = await supabase
             .from("transactions")
             .delete()
-            .eq("id", id);
+            .eq("id", id)
+            .eq("owner", owner);
 
         if (error) {
             console.error("Error deleting transaction:", error);
@@ -44,10 +53,17 @@
     }
 
     onMount(async () => {
+        const { owner } = await resolveOwner(supabase, $currentUser);
+        if (!owner) {
+            loading = false;
+            return;
+        }
+
         const { data, error } = await supabase
             .from("transactions")
             .select("*")
             .eq("id", id)
+            .eq("owner", owner)
             .single();
 
         if (error) {
@@ -55,10 +71,7 @@
         } else {
             transaction = data;
             if (transaction.image_path) {
-                const { data: publicUrlData } = supabase.storage
-                    .from("receipts")
-                    .getPublicUrl(transaction.image_path);
-                imageUrl = publicUrlData.publicUrl;
+                imageUrl = await getReceiptPreviewUrl(transaction.image_path);
             }
         }
         loading = false;

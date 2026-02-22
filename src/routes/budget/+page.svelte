@@ -4,6 +4,7 @@
     import { Save } from "lucide-svelte";
 
     import { currentUser } from "$lib/userStore";
+    import { resolveOwner } from "$lib/owner";
 
     let amount: number | null = null;
     let loading = true;
@@ -20,12 +21,19 @@
 
     async function loadBudget() {
         loading = true;
+        const { owner } = await resolveOwner(supabase, $currentUser);
+        if (!owner) {
+            amount = null;
+            loading = false;
+            return;
+        }
+
         const { data, error } = await supabase
             .from("budgets")
             .select("amount")
             .eq("year", currentYear)
             .eq("month", currentMonth)
-            .eq("owner", $currentUser)
+            .eq("owner", owner)
             .single();
 
         if (data) {
@@ -41,13 +49,19 @@
     async function handleSave() {
         if (amount === null) return;
         saving = true;
+        const { owner } = await resolveOwner(supabase, $currentUser);
+        if (!owner) {
+            alert("ไม่สามารถระบุเจ้าของข้อมูลได้ กรุณาเข้าสู่ระบบใหม่");
+            saving = false;
+            return;
+        }
 
         const { error } = await supabase.from("budgets").upsert(
             {
                 year: currentYear,
                 month: currentMonth,
                 amount: amount,
-                owner: $currentUser,
+                owner,
             },
             { onConflict: "year,month,owner" },
         );

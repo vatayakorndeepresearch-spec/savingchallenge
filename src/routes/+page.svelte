@@ -3,6 +3,7 @@
     import { supabase } from "$lib/supabaseClient";
     import { Wallet, TrendingUp, TrendingDown } from "lucide-svelte";
     import { currentUser, users } from "$lib/userStore";
+    import { resolveOwner } from "$lib/owner";
     import {
         getJarAllocations,
         resolveJarForTransaction,
@@ -94,13 +95,19 @@
             59,
             59,
         ).toISOString();
+        const { owner } = await resolveOwner(supabase, $currentUser);
+        if (!owner) {
+            loading = false;
+            insight = "ยังไม่พบผู้ใช้ที่ใช้งานอยู่";
+            return;
+        }
 
         const { data: transactions, error: txError } = await supabase
             .from("transactions")
             .select("*")
             .gte("date", startOfMonth)
             .lte("date", endOfMonth)
-            .eq("owner", $currentUser); // Only current user
+            .eq("owner", owner);
 
         if (txError) console.error("Error loading transactions:", txError);
 
@@ -110,7 +117,7 @@
             .select("amount")
             .eq("year", currentYear)
             .eq("month", currentMonth)
-            .eq("owner", $currentUser)
+            .eq("owner", owner)
             .single();
 
         if (budgetError && budgetError.code !== "PGRST116")

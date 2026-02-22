@@ -10,6 +10,8 @@
         type JarKey,
     } from "$lib/jars";
     import { runSlipOcr, type SlipOcrResult } from "$lib/slipOcr";
+    import { resolveOwner } from "$lib/owner";
+    import { getReceiptPreviewUrl } from "$lib/receiptUrl";
 
     import { page } from "$app/stores";
     import { onMount } from "svelte";
@@ -79,10 +81,18 @@
         if (transactionId) {
             isEditMode = true;
             loading = true;
+            const { owner } = await resolveOwner(supabase, $currentUser);
+            if (!owner) {
+                loading = false;
+                alert("ไม่พบผู้ใช้สำหรับโหลดข้อมูล");
+                return;
+            }
+
             const { data, error } = await supabase
                 .from("transactions")
                 .select("*")
                 .eq("id", transactionId)
+                .eq("owner", owner)
                 .single();
 
             if (data) {
@@ -109,10 +119,7 @@
                 }
 
                 if (currentImagePath) {
-                    const { data: publicUrlData } = supabase.storage
-                        .from("receipts")
-                        .getPublicUrl(currentImagePath);
-                    previewUrl = publicUrlData.publicUrl;
+                    previewUrl = await getReceiptPreviewUrl(currentImagePath);
                 }
             }
             loading = false;
@@ -156,13 +163,9 @@
     }
 
     async function resolveOwnerForWrite(): Promise<string> {
-        const { data } = await supabase.auth.getUser();
-        const user = data.user;
-        const ownerFromClaim =
-            typeof user?.app_metadata?.owner === "string"
-                ? user.app_metadata.owner
-                : null;
-        return ownerFromClaim || user?.id || $currentUser;
+        const { owner } = await resolveOwner(supabase, $currentUser);
+        if (!owner) throw new Error("Owner is not available");
+        return owner;
     }
 
     async function handleSubmit() {
@@ -176,7 +179,15 @@
 
         if (!amount || !finalCategory) return;
         loading = true;
-        const ownerForWrite = await resolveOwnerForWrite();
+        let ownerForWrite: string;
+        try {
+            ownerForWrite = await resolveOwnerForWrite();
+        } catch (error) {
+            console.error("Resolve owner failed:", error);
+            alert("ไม่สามารถระบุเจ้าของข้อมูลได้ กรุณาเข้าสู่ระบบใหม่");
+            loading = false;
+            return;
+        }
 
         let image_path = currentImagePath;
 
@@ -216,7 +227,8 @@
             const { error: updateError } = await supabase
                 .from("transactions")
                 .update(payload)
-                .eq("id", transactionId);
+                .eq("id", transactionId)
+                .eq("owner", ownerForWrite);
             error = updateError;
         } else {
             const { error: insertError } = await supabase
@@ -244,7 +256,15 @@
         if (!confirm("ยืนยันว่าวันนี้ไม่ได้ใช้เงินเลย? (สุดยอด! 🎉)")) return;
 
         loading = true;
-        const ownerForWrite = await resolveOwnerForWrite();
+        let ownerForWrite: string;
+        try {
+            ownerForWrite = await resolveOwnerForWrite();
+        } catch (error) {
+            console.error("Resolve owner failed:", error);
+            alert("ไม่สามารถระบุเจ้าของข้อมูลได้ กรุณาเข้าสู่ระบบใหม่");
+            loading = false;
+            return;
+        }
         const { error } = await supabase.from("transactions").insert({
             type: "expense",
             amount: 0,
@@ -390,7 +410,9 @@
         try {
             const response = await fetch("/api/classify-note", {
                 method: "POST",
-                headers: { "content-type": "application/json" },
+                headers: {
+                    "content-type": "application/json",
+                },
                 body: JSON.stringify({
                     note: trimmedNote,
                     type,
