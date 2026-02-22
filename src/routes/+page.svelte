@@ -14,7 +14,6 @@
     let loading = true;
     let totalIncome = 0;
     let totalExpense = 0;
-    let budgetAmount: number | null = null;
     let score = 0;
     let insight = "";
     type JarProgress = JarAllocation & {
@@ -155,20 +154,6 @@
 
         if (txError) console.error("Error loading transactions:", txError);
 
-        // Get budget for current month
-        const { data: budget, error: budgetError } = await supabase
-            .from("budgets")
-            .select("amount")
-            .eq("year", currentYear)
-            .eq("month", currentMonth)
-            .eq("owner", owner)
-            .single();
-
-        if (budgetError && budgetError.code !== "PGRST116")
-            console.error("Error loading budget:", budgetError);
-
-        budgetAmount = budget?.amount || null;
-
         if (transactions) {
             const expenses = transactions.filter((t) => t.type === "expense");
             const incomes = transactions.filter((t) => t.type === "income");
@@ -200,11 +185,6 @@
 
             // Calculate Personal Score
             score = 0;
-            if (budgetAmount && budgetAmount > 0) {
-                if (totalExpense <= budgetAmount) score += 100;
-                else score -= 100;
-            }
-
             const luxuryCount = expenses.filter(
                 (t) =>
                     t.category.toLowerCase().includes("luxury") ||
@@ -235,10 +215,7 @@
             pieSegments = computePieSegments(expenseByCategory);
 
             // Generate Insight
-            if (budgetAmount && totalExpense > budgetAmount * 0.8) {
-                insight =
-                    "เดือนนี้ใช้ไปเกิน 80% ของงบแล้ว ระวังจะเกินงบนะครับ 💸";
-            } else if (luxuryCount === 0 && expenses.length > 0) {
+            if (luxuryCount === 0 && expenses.length > 0) {
                 insight =
                     "เดือนนี้ยังไม่มีค่าใช้จ่ายฟุ่มเฟือยเลย เก่งมากครับ 🎉";
             } else {
@@ -376,13 +353,8 @@
                         <circle cx="50" cy="50" r="25" fill="white" />
                     </svg>
                     <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                        {#if budgetAmount}
-                            <span class="text-2xl font-bold text-slate-800">{Math.round((totalExpense / budgetAmount) * 100)}%</span>
-                            <span class="text-[10px] text-slate-400 uppercase font-medium">ของงบ</span>
-                        {:else}
-                            <span class="text-lg font-bold text-slate-800">฿{totalExpense.toLocaleString()}</span>
-                            <span class="text-[10px] text-slate-400 uppercase font-medium">รายจ่าย</span>
-                        {/if}
+                        <span class="text-lg font-bold text-slate-800">฿{totalExpense.toLocaleString()}</span>
+                        <span class="text-[10px] text-slate-400 uppercase font-medium">รายจ่าย</span>
                     </div>
                 </div>
 
@@ -401,9 +373,6 @@
 
                 <div class="w-full mt-4 flex justify-between text-xs pt-3 border-t border-slate-100">
                     <span class="text-slate-500">ใช้ไป: ฿{totalExpense.toLocaleString()}</span>
-                    {#if budgetAmount}
-                        <span class="font-medium text-slate-700">งบ: ฿{budgetAmount.toLocaleString()}</span>
-                    {/if}
                 </div>
             </div>
         {:else}
@@ -412,9 +381,6 @@
                     <TrendingDown size={40} class="mx-auto opacity-20" />
                 </div>
                 <p class="text-slate-500 text-sm">ยังไม่มีค่าใช้จ่ายในเดือนนี้</p>
-                {#if budgetAmount}
-                    <div class="mt-2 text-xs text-slate-400">งบประมาณ: ฿{budgetAmount.toLocaleString()}</div>
-                {/if}
             </div>
         {/if}
     </div>

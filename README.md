@@ -4,7 +4,7 @@ A minimal savings-tracking app for couples, built with SvelteKit and Supabase.
 
 ## Features
 
-- **Dashboard**: Monthly summary, budget status, and saving score.
+- **Dashboard**: Monthly summary and saving score.
 - **4-Jar Auto-Allocation**: Split income into Expense/Saving/Investment/Debt with 40/20/20/20 guidance.
 - **Add Transaction**: Record income/expense with categories and receipt images.
 - **Bulk Slip Upload**: Upload many slips in one round, OCR each slip, edit each row, then save as a batch.
@@ -12,7 +12,6 @@ A minimal savings-tracking app for couples, built with SvelteKit and Supabase.
 - **Actionable Analytics**: See Saving/Investment/Debt gaps and jump to prefilled add form actions.
 - **AI Assist**: MiniMax ช่วยจัดหมวดจากโน้ตและโค้ชนิสัยการเงิน พร้อม fallback เมื่อ AI ใช้งานไม่ได้.
 - **Transactions List**: View history by month.
-- **Budgeting**: Set monthly budget goals.
 - **Analytics**: Simple breakdown of expenses and saving rate.
 - **Game/Streak**: Track logging consistency and "no-luxury" streaks.
 
