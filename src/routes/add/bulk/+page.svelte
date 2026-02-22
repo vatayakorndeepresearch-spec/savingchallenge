@@ -67,6 +67,7 @@
     const MAX_FILES = 20;
     const MAX_FILE_SIZE_BYTES = 8 * 1024 * 1024;
     const SAVE_CONCURRENCY = 3;
+    const MAX_OCR_RAW_TEXT_LENGTH = 12000;
 
     let items: BulkItem[] = [];
     let selectedPreview: string | null = null;
@@ -77,6 +78,7 @@
     let batchSummary = "";
 
     let supportsBatchColumns: boolean | null = null;
+    let supportsOcrColumns: boolean | null = null;
 
     function todayIso() {
         return new Date().toISOString().split("T")[0];
@@ -478,9 +480,32 @@
         }
     }
 
+    function normalizeOcrRawText(value: string | null): string | null {
+        const text = typeof value === "string" ? value.trim() : "";
+        if (!text) return null;
+        return text.length > MAX_OCR_RAW_TEXT_LENGTH
+            ? text.slice(0, MAX_OCR_RAW_TEXT_LENGTH)
+            : text;
+    }
+
+    function normalizeOcrConfidence(value: number | null): number | null {
+        if (typeof value !== "number" || !Number.isFinite(value)) return null;
+        const clamped = Math.max(0, Math.min(100, value));
+        return Math.round((clamped + Number.EPSILON) * 100) / 100;
+    }
+
+    function hasMissingBatchColumnsError(message: string): boolean {
+        return message.includes("batch_id") || message.includes("source_file_name");
+    }
+
+    function hasOcrMetadataError(message: string): boolean {
+        return message.includes("ocr_raw_text") || message.includes("ocr_confidence");
+    }
+
     async function insertTransactionWithOptionalColumns(
         basePayload: Record<string, unknown>,
-        optionalPayload: Record<string, unknown>,
+        optionalBatchPayload: Record<string, unknown>,
+        optionalOcrPayload: Record<string, unknown>,
     ): Promise<{ id: number | null; error: Error | null }> {
         const runInsert = async (payload: Record<string, unknown>) => {
             const { data, error } = await supabase
@@ -500,26 +525,42 @@
             };
         };
 
-        if (supportsBatchColumns === false) {
-            return runInsert(basePayload);
+        const hasBatchOptional = Object.keys(optionalBatchPayload).length > 0;
+        const hasOcrOptional = Object.keys(optionalOcrPayload).length > 0;
+
+        let includeBatchOptional = supportsBatchColumns !== false && hasBatchOptional;
+        let includeOcrOptional = supportsOcrColumns !== false && hasOcrOptional;
+
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const payload = {
+                ...basePayload,
+                ...(includeBatchOptional ? optionalBatchPayload : {}),
+                ...(includeOcrOptional ? optionalOcrPayload : {}),
+            };
+            const result = await runInsert(payload);
+            if (!result.error) {
+                supportsBatchColumns = includeBatchOptional;
+                supportsOcrColumns = includeOcrOptional;
+                return result;
+            }
+
+            const message = String(result.error.message || "").toLowerCase();
+
+            if (includeBatchOptional && hasMissingBatchColumnsError(message)) {
+                includeBatchOptional = false;
+                supportsBatchColumns = false;
+                continue;
+            }
+            if (includeOcrOptional && hasOcrMetadataError(message)) {
+                includeOcrOptional = false;
+                supportsOcrColumns = false;
+                continue;
+            }
+
+            return result;
         }
 
-        const withOptional = await runInsert({ ...basePayload, ...optionalPayload });
-        if (!withOptional.error) {
-            supportsBatchColumns = true;
-            return withOptional;
-        }
-
-        const message = String(withOptional.error.message || "").toLowerCase();
-        const missingOptionalColumns =
-            message.includes("batch_id") || message.includes("source_file_name");
-
-        if (missingOptionalColumns) {
-            supportsBatchColumns = false;
-            return runInsert(basePayload);
-        }
-
-        return withOptional;
+        return { id: null, error: new Error("Insert failed after fallback attempts") };
     }
 
     async function saveSingleItem(itemId: string, owner: string, batchId: string) {
@@ -561,22 +602,31 @@
                 note: current.note || null,
                 image_path: imagePath,
                 jar_key: jarKey,
-                ocr_raw_text: current.ocrResult?.rawText || null,
-                ocr_confidence:
-                    typeof current.ocrResult?.confidence === "number"
-                        ? current.ocrResult.confidence
-                        : null,
                 owner,
             };
 
-            const optionalPayload = {
+            const optionalBatchPayload = {
                 batch_id: batchId,
                 source_file_name: current.sourceFileName,
             };
+            const optionalOcrPayload: Record<string, unknown> = {};
+            const normalizedRawText = normalizeOcrRawText(current.ocrResult?.rawText || null);
+            const normalizedConfidence = normalizeOcrConfidence(
+                typeof current.ocrResult?.confidence === "number"
+                    ? current.ocrResult.confidence
+                    : null,
+            );
+            if (normalizedRawText !== null) {
+                optionalOcrPayload.ocr_raw_text = normalizedRawText;
+            }
+            if (normalizedConfidence !== null) {
+                optionalOcrPayload.ocr_confidence = normalizedConfidence;
+            }
 
             const inserted = await insertTransactionWithOptionalColumns(
                 basePayload,
-                optionalPayload,
+                optionalBatchPayload,
+                optionalOcrPayload,
             );
 
             if (inserted.error) throw inserted.error;

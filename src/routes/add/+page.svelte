@@ -54,6 +54,9 @@
     let aiCategoryMessage = "";
     let aiCategoryConfidence: number | null = null;
     let aiCategorySource: "minimax" | "fallback" | null = null;
+    let supportsOcrColumns: boolean | null = null;
+
+    const MAX_OCR_RAW_TEXT_LENGTH = 12000;
 
     onMount(async () => {
         transactionId = $page.url.searchParams.get("id");
@@ -151,6 +154,76 @@
         }
     }
 
+    function normalizeOcrRawText(value: string | null): string | null {
+        const text = typeof value === "string" ? value.trim() : "";
+        if (!text) return null;
+        return text.length > MAX_OCR_RAW_TEXT_LENGTH
+            ? text.slice(0, MAX_OCR_RAW_TEXT_LENGTH)
+            : text;
+    }
+
+    function normalizeOcrConfidence(value: number | null): number | null {
+        if (typeof value !== "number" || !Number.isFinite(value)) return null;
+        const clamped = Math.max(0, Math.min(100, value));
+        return Math.round((clamped + Number.EPSILON) * 100) / 100;
+    }
+
+    function isOcrMetadataError(message: string): boolean {
+        const lowered = message.toLowerCase();
+        return lowered.includes("ocr_raw_text") || lowered.includes("ocr_confidence");
+    }
+
+    async function writeTransactionWithOptionalOcrColumns(
+        basePayload: Record<string, unknown>,
+        optionalOcrPayload: Record<string, unknown>,
+        ownerForWrite: string,
+    ) {
+        const hasOcrMetadata = Object.keys(optionalOcrPayload).length > 0;
+        let includeOcrMetadata = supportsOcrColumns !== false && hasOcrMetadata;
+
+        const runWrite = async (payload: Record<string, unknown>) => {
+            if (isEditMode && transactionId) {
+                const { error: updateError } = await supabase
+                    .from("transactions")
+                    .update(payload)
+                    .eq("id", transactionId)
+                    .eq("owner", ownerForWrite);
+                return updateError;
+            }
+
+            const { error: insertError } = await supabase
+                .from("transactions")
+                .insert(payload);
+            return insertError;
+        };
+
+        let error = await runWrite(
+            includeOcrMetadata ? { ...basePayload, ...optionalOcrPayload } : basePayload,
+        );
+
+        if (!error && includeOcrMetadata) {
+            supportsOcrColumns = true;
+            return null;
+        }
+
+        const message =
+            typeof error === "object" && error && "message" in error
+                ? String((error as { message?: unknown }).message || "")
+                : "";
+
+        if (error && includeOcrMetadata && isOcrMetadataError(message)) {
+            supportsOcrColumns = false;
+            includeOcrMetadata = false;
+            error = await runWrite(basePayload);
+        }
+
+        if (!error && hasOcrMetadata && includeOcrMetadata === false) {
+            supportsOcrColumns = false;
+        }
+
+        return error;
+    }
+
     async function handleSubmit() {
         // Use custom category if 'Other' is selected
         const finalCategory =
@@ -196,7 +269,7 @@
             uploadedImagePath = filePath;
         }
 
-        const payload = {
+        const basePayload = {
             type,
             amount,
             category: finalCategory,
@@ -204,25 +277,21 @@
             note,
             image_path,
             jar_key,
-            ocr_raw_text: ocrRawText,
-            ocr_confidence: ocrConfidence,
             owner: ownerForWrite,
         };
-
-        let error;
-        if (isEditMode && transactionId) {
-            const { error: updateError } = await supabase
-                .from("transactions")
-                .update(payload)
-                .eq("id", transactionId)
-                .eq("owner", ownerForWrite);
-            error = updateError;
-        } else {
-            const { error: insertError } = await supabase
-                .from("transactions")
-                .insert(payload);
-            error = insertError;
+        const optionalOcrPayload: Record<string, unknown> = {};
+        const normalizedRawText = normalizeOcrRawText(ocrRawText);
+        const normalizedConfidence = normalizeOcrConfidence(ocrConfidence);
+        if (normalizedRawText !== null) optionalOcrPayload.ocr_raw_text = normalizedRawText;
+        if (normalizedConfidence !== null) {
+            optionalOcrPayload.ocr_confidence = normalizedConfidence;
         }
+
+        const error = await writeTransactionWithOptionalOcrColumns(
+            basePayload,
+            optionalOcrPayload,
+            ownerForWrite,
+        );
 
         if (error) {
             await cleanupReceiptUpload(uploadedImagePath);
@@ -277,8 +346,6 @@
             date,
             note: "No Spend Day! 🎉",
             jar_key: "expense",
-            ocr_raw_text: null,
-            ocr_confidence: null,
             owner: ownerForWrite,
         });
 
