@@ -4,9 +4,7 @@
   import { currentUser, users } from "$lib/userStore";
 
   function toggleUser() {
-    $currentUser = $currentUser === "bear" ? "rabbit" : "bear";
-    // Simple visual feedback could be added here if needed,
-    // but the button change is reactive.
+    currentUser.update((value) => (value === "bear" ? "rabbit" : "bear"));
   }
 </script>
 
@@ -17,10 +15,12 @@
 
       <!-- User Switcher Button -->
       <button
-        on:click={toggleUser}
+        type="button"
+        on:pointerup={toggleUser}
         class="flex items-center gap-2 px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-sm border border-transparent hover:border-slate-200 {users[
           $currentUser
         ].bg}"
+        style="touch-action: manipulation; -webkit-tap-highlight-color: transparent;"
         title="กดเพื่อสลับผู้ใช้"
       >
         <span class="text-xl">{users[$currentUser].emoji}</span>
