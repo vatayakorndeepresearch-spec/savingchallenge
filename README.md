@@ -7,6 +7,7 @@ A minimal savings-tracking app for couples, built with SvelteKit and Supabase.
 - **Dashboard**: Monthly summary, budget status, and saving score.
 - **4-Jar Auto-Allocation**: Split income into Expense/Saving/Investment/Debt with 40/20/20/20 guidance.
 - **Add Transaction**: Record income/expense with categories and receipt images.
+- **Slip OCR Autofill**: When uploading a slip image, auto-detect amount/date/note and prefill the form.
 - **Transactions List**: View history by month.
 - **Budgeting**: Set monthly budget goals.
 - **Analytics**: Simple breakdown of expenses and saving rate.

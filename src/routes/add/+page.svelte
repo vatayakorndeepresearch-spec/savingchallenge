@@ -4,6 +4,7 @@
     import { Upload, Loader2 } from "lucide-svelte";
     import { currentUser } from "$lib/userStore";
     import { getJarAllocations, type JarAllocation } from "$lib/jars";
+    import { runSlipOcr, type SlipOcrResult } from "$lib/slipOcr";
 
     import { page } from "$app/stores";
     import { onMount } from "svelte";
@@ -54,6 +55,11 @@
         type === "income" && amount && amount > 0 ? getJarAllocations(amount) : [];
 
     let customCategory = "";
+    let ocrLoading = false;
+    let ocrProgress = 0;
+    let ocrError = "";
+    let ocrResult: SlipOcrResult | null = null;
+    let ocrAutoFilled = false;
 
     onMount(async () => {
         transactionId = $page.url.searchParams.get("id");
@@ -199,11 +205,69 @@
         const target = e.target as HTMLInputElement;
         if (target.files && target.files.length > 0) {
             file = target.files[0];
+            ocrAutoFilled = false;
+            ocrResult = null;
+            ocrError = "";
+            ocrProgress = 0;
             const reader = new FileReader();
             reader.onload = (e) => {
                 previewUrl = e.target?.result as string;
             };
             reader.readAsDataURL(file);
+
+            void analyzeSlip(file);
+        }
+    }
+
+    function applyOcrResult(result: SlipOcrResult, force = false) {
+        if (result.inferredType) {
+            type = result.inferredType;
+        }
+
+        if (result.amount !== null) {
+            amount = result.amount;
+        }
+
+        if (result.date) {
+            date = result.date;
+        }
+
+        if (result.note && (force || !note.trim())) {
+            note = result.note;
+        }
+
+        if (!category) {
+            category =
+                result.inferredType === "income"
+                    ? "Salary (เงินเดือน)"
+                    : "Other (อื่นๆ)";
+        }
+
+        const availableCategories = getCategoriesByType(type);
+        if (!availableCategories.includes(category)) {
+            category = "Other (อื่นๆ)";
+        }
+
+        ocrAutoFilled = true;
+    }
+
+    async function analyzeSlip(targetFile: File) {
+        ocrLoading = true;
+        ocrProgress = 0;
+        ocrError = "";
+
+        try {
+            const result = await runSlipOcr(targetFile, (progress) => {
+                ocrProgress = progress;
+            });
+
+            ocrResult = result;
+            applyOcrResult(result, true);
+        } catch (error) {
+            console.error("OCR error:", error);
+            ocrError = "อ่านสลิปไม่สำเร็จ ลองอัปโหลดรูปที่คมชัดขึ้นอีกครั้ง";
+        } finally {
+            ocrLoading = false;
         }
     }
 </script>
@@ -390,6 +454,73 @@
                     {/if}
                 </label>
             </div>
+
+            {#if ocrLoading}
+                <div class="mt-3 rounded-lg border border-blue-100 bg-blue-50 p-3">
+                    <div class="flex items-center gap-2 text-blue-700 text-sm font-medium mb-2">
+                        <Loader2 size={16} class="animate-spin" />
+                        กำลังอ่านข้อมูลจากสลิป...
+                    </div>
+                    <div class="h-2 bg-white rounded overflow-hidden">
+                        <div
+                            class="h-2 bg-blue-500 transition-all"
+                            style="width: {Math.round(ocrProgress * 100)}%"
+                        ></div>
+                    </div>
+                    <div class="text-xs text-blue-700 mt-1">
+                        {Math.round(ocrProgress * 100)}%
+                    </div>
+                </div>
+            {/if}
+
+            {#if ocrError}
+                <div class="mt-3 rounded-lg border border-rose-100 bg-rose-50 p-3 text-sm text-rose-700">
+                    {ocrError}
+                </div>
+            {/if}
+
+            {#if ocrResult && !ocrLoading}
+                <div class="mt-3 rounded-lg border border-emerald-100 bg-emerald-50 p-3 space-y-2">
+                    <div class="flex justify-between items-center">
+                        <h4 class="text-sm font-bold text-emerald-800">
+                            OCR อ่านสลิปสำเร็จ
+                        </h4>
+                        <button
+                            type="button"
+                            class="text-xs text-emerald-700 font-medium hover:underline"
+                            on:click={() => {
+                                if (ocrResult) applyOcrResult(ocrResult, true);
+                            }}
+                        >
+                            ใช้ค่าจาก OCR อีกครั้ง
+                        </button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 text-xs">
+                        <div class="rounded bg-white p-2 border border-emerald-100">
+                            <div class="text-slate-500">ยอดเงิน</div>
+                            <div class="font-semibold text-slate-700">
+                                {ocrResult.amount !== null
+                                    ? `฿${ocrResult.amount.toLocaleString()}`
+                                    : "-"}
+                            </div>
+                        </div>
+                        <div class="rounded bg-white p-2 border border-emerald-100">
+                            <div class="text-slate-500">วันที่</div>
+                            <div class="font-semibold text-slate-700">
+                                {ocrResult.date || "-"}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-xs text-slate-600">
+                        โน้ตที่อ่านได้: {ocrResult.note}
+                    </div>
+                    {#if ocrAutoFilled}
+                        <div class="text-[11px] text-emerald-700">
+                            ระบบเติมค่าในฟอร์มให้อัตโนมัติแล้ว คุณสามารถแก้ไขต่อได้
+                        </div>
+                    {/if}
+                </div>
+            {/if}
         </div>
 
         <!-- Submit Button -->

@@ -25,7 +25,8 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.39.3",
     "date-fns": "^4.1.0",
-    "lucide-svelte": "^0.294.0"
+    "lucide-svelte": "^0.294.0",
+    "tesseract.js": "^7.0.0"
   },
   "type": "module",
   "engines": {

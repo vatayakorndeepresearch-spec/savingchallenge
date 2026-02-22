@@ -74,3 +74,35 @@ export function inferJarFromCategory(category: string): JarKey | null {
     }
     return null;
 }
+
+export function resolveJarForExpenseCategory(category: string): JarKey {
+    const normalized = category.toLowerCase().trim();
+
+    if (
+        normalized === "saving (ออม)" ||
+        normalized === "saving" ||
+        normalized.includes("เงินออม")
+    ) {
+        return "saving";
+    }
+
+    if (
+        normalized === "investment (ลงทุน)" ||
+        normalized === "investment" ||
+        normalized.includes("เงินลงทุน")
+    ) {
+        return "investment";
+    }
+
+    if (
+        normalized === "debt (หนี้)" ||
+        normalized === "debt" ||
+        normalized.includes("ชำระหนี้")
+    ) {
+        return "debt";
+    }
+
+    // Fallback for custom categories like "ออมฉุกเฉิน" or "debt payment"
+    const inferred = inferJarFromCategory(category);
+    return inferred ?? "expense";
+}
