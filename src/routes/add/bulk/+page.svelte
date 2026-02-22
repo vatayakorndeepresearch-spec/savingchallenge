@@ -347,7 +347,7 @@
 
     function getFinalCategory(item: BulkItem): string {
         if (item.category.startsWith("Other")) {
-            return item.customCategory.trim();
+            return item.customCategory.trim() || item.category;
         }
         return item.category.trim();
     }
