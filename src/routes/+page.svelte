@@ -14,8 +14,7 @@
     let loading = true;
     let totalIncome = 0;
     let totalExpense = 0;
-    let score = 0;
-    let insight = "";
+    let expenseSummary = "";
     type JarProgress = JarAllocation & {
         actual: number;
         delta: number;
@@ -115,8 +114,7 @@
         loading = true;
         totalIncome = 0;
         totalExpense = 0;
-        score = 0;
-        insight = "สู้ๆ นะครับ ช่วยกันเก็บออมเพื่ออนาคต! 💪";
+        expenseSummary = `ยอดรวมเดือน ${currentMonth}/${currentYear}`;
         jarProgress = getJarAllocations(0).map((jar) => ({
             ...jar,
             actual: 0,
@@ -141,7 +139,7 @@
         const { owner } = await resolveOwner(supabase, $currentUser);
         if (!owner) {
             loading = false;
-            insight = "ยังไม่พบผู้ใช้ที่ใช้งานอยู่";
+            expenseSummary = "ยังไม่พบผู้ใช้ที่ใช้งานอยู่";
             return;
         }
 
@@ -183,19 +181,6 @@
                 return { ...jar, actual, delta, progress };
             });
 
-            // Calculate Personal Score
-            score = 0;
-            const luxuryCount = expenses.filter(
-                (t) =>
-                    t.category.toLowerCase().includes("luxury") ||
-                    t.category.includes("ฟุ่มเฟือย"),
-            ).length;
-            score -= luxuryCount * 10;
-
-            if (luxuryCount === 0 && expenses.length > 0) {
-                score += 50;
-            }
-
             // Calculate Expense By Category
             const catMap = new Map<string, number>();
             expenses.forEach((tx) => {
@@ -213,14 +198,6 @@
                 .sort((a, b) => b.amount - a.amount);
 
             pieSegments = computePieSegments(expenseByCategory);
-
-            // Generate Insight
-            if (luxuryCount === 0 && expenses.length > 0) {
-                insight =
-                    "เดือนนี้ยังไม่มีค่าใช้จ่ายฟุ่มเฟือยเลย เก่งมากครับ 🎉";
-            } else {
-                insight = "สู้ๆ นะครับ ช่วยกันเก็บออมเพื่ออนาคต! 💪";
-            }
         }
 
         loading = false;
@@ -239,7 +216,7 @@
         <span>มาเช็คสุขภาพการเงินกันเถอะ!</span>
     </div>
 
-    <!-- Score Card -->
+    <!-- Expense Card -->
     <div
         class="bg-gradient-to-br from-pink-500 to-rose-500 rounded-2xl p-6 text-white shadow-lg text-center relative overflow-hidden"
     >
@@ -247,10 +224,12 @@
             class="absolute top-0 left-0 w-full h-full bg-white opacity-10 transform -skew-x-12"
         ></div>
         <h2 class="text-lg font-medium opacity-90 relative z-10">
-            คะแนนความประหยัด
+            รายจ่าย
         </h2>
-        <div class="text-5xl font-bold mt-2 relative z-10">{score}</div>
-        <p class="mt-2 text-sm opacity-90 relative z-10">{insight}</p>
+        <div class="text-5xl font-bold mt-2 relative z-10">
+            ฿{totalExpense.toLocaleString()}
+        </div>
+        <p class="mt-2 text-sm opacity-90 relative z-10">{expenseSummary}</p>
     </div>
 
     <!-- Summary Cards -->

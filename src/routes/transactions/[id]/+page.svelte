@@ -15,20 +15,11 @@
     let loading = true;
     let imageUrl: string | null = null;
     let incomeAllocations: JarAllocation[] = [];
-    let ocrConfidence: number | null = null;
 
     $: incomeAllocations =
         transaction?.type === "income"
             ? getJarAllocations(Number(transaction.amount) || 0)
             : [];
-    $: ocrConfidence = transaction
-        ? (() => {
-              const parsed = Number.parseFloat(
-                  String(transaction.ocr_confidence ?? ""),
-              );
-              return Number.isFinite(parsed) ? parsed : null;
-          })()
-        : null;
 
     async function handleDelete() {
         if (!confirm("คุณแน่ใจหรือไม่ที่จะลบรายการนี้?")) return;
@@ -155,28 +146,6 @@
                     >
                         {transaction.note}
                     </div>
-                {/if}
-
-                {#if transaction.ocr_raw_text || ocrConfidence !== null}
-                    <details class="mt-4 rounded-lg border border-slate-200 p-3 bg-slate-50">
-                        <summary
-                            class="text-xs font-semibold text-slate-700 cursor-pointer"
-                        >
-                            OCR Debug Data
-                        </summary>
-                        <div class="mt-2 text-xs text-slate-600 space-y-2">
-                            <div>
-                                confidence: {ocrConfidence !== null
-                                    ? `${ocrConfidence.toFixed(1)}%`
-                                    : "-"}
-                            </div>
-                            {#if transaction.ocr_raw_text}
-                                <pre
-                                    class="whitespace-pre-wrap break-words bg-white p-2 rounded border border-slate-200 max-h-48 overflow-auto"
-                                >{transaction.ocr_raw_text}</pre>
-                            {/if}
-                        </div>
-                    </details>
                 {/if}
 
                 {#if incomeAllocations.length > 0}
