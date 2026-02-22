@@ -12,6 +12,7 @@
     import { runSlipOcr, type SlipOcrResult } from "$lib/slipOcr";
     import { resolveOwner } from "$lib/owner";
     import { getReceiptPreviewUrl } from "$lib/receiptUrl";
+    import { prepareReceiptUpload } from "$lib/utils/receiptUpload";
     import {
         getCategoriesByType,
         getAiAllowedCategories,
@@ -175,17 +176,19 @@
         let uploadedImagePath: string | null = null;
 
         if (file) {
-            const fileExt = file.name.split(".").pop();
-            const fileName = `${Math.random()}.${fileExt}`;
+            const prepared = await prepareReceiptUpload(file);
+            const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}.${prepared.ext}`;
             const filePath = `${ownerForWrite}/${fileName}`;
 
             const { error: uploadError } = await supabase.storage
                 .from("receipts")
-                .upload(filePath, file);
+                .upload(filePath, prepared.body, {
+                    contentType: prepared.contentType,
+                });
 
             if (uploadError) {
                 console.error("Upload error:", uploadError);
-                alert("Failed to upload image");
+                alert(`Failed to upload image: ${uploadError.message}`);
                 loading = false;
                 return;
             }
@@ -224,7 +227,15 @@
         if (error) {
             await cleanupReceiptUpload(uploadedImagePath);
             console.error("Error saving transaction:", error);
-            alert("Failed to save transaction");
+            const message =
+                typeof error === "object" && error && "message" in error
+                    ? String((error as { message?: unknown }).message || "")
+                    : "";
+            alert(
+                message
+                    ? `Failed to save transaction: ${message}`
+                    : "Failed to save transaction",
+            );
         } else {
             const shouldCleanupPreviousReceipt =
                 isEditMode &&

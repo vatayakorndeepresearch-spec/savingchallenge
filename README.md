@@ -49,6 +49,8 @@ A minimal savings-tracking app for couples, built with SvelteKit and Supabase.
 
 3. **Database Setup**
    Run the SQL commands in `schema.sql` in your Supabase SQL Editor to create the tables and storage bucket.
+   - `schema.sql` now guards storage policy DDL in case your SQL role is not owner of `storage.objects`.
+   - If you see a `NOTICE` about skipping storage policy DDL, app tables still created successfully. Configure receipt storage policies in the Supabase Dashboard (Storage -> Policies) or rerun the storage section as the owner role (`postgres` in SQL Editor).
    If your DB is already running on an older schema:
    - Run `add_jar_key.sql` to add and backfill `transactions.jar_key`.
    - Run `add_ocr_metadata.sql` to add `ocr_raw_text` and `ocr_confidence`.

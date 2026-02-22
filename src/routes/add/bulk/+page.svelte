@@ -6,6 +6,7 @@
     import { resolveOwner } from "$lib/owner";
     import { resolveJarForExpenseCategory, type JarKey } from "$lib/jars";
     import { runSlipOcr, type SlipOcrResult } from "$lib/slipOcr";
+    import { prepareReceiptUpload } from "$lib/utils/receiptUpload";
     import {
         getCategoriesByType,
         getAiAllowedCategories,
@@ -454,20 +455,16 @@
         classifyingAll = false;
     }
 
-    function sanitizeFileExt(file: File): string {
-        const nameParts = file.name.split(".");
-        const raw = (nameParts.length > 1 ? nameParts.pop() : "jpg") || "jpg";
-        return raw.toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
-    }
-
     async function uploadReceipt(owner: string, file: File): Promise<string> {
-        const ext = sanitizeFileExt(file);
-        const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}.${ext}`;
+        const prepared = await prepareReceiptUpload(file);
+        const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}.${prepared.ext}`;
         const filePath = `${owner}/${fileName}`;
 
         const { error } = await supabase.storage
             .from("receipts")
-            .upload(filePath, file);
+            .upload(filePath, prepared.body, {
+                contentType: prepared.contentType,
+            });
 
         if (error) throw new Error(error.message || "upload failed");
         return filePath;

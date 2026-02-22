@@ -3,10 +3,19 @@ insert into storage.buckets (id, name, public)
 values ('receipts', 'receipts', true)
 on conflict (id) do nothing;
 
--- 2. Create the policy (Drop first to avoid errors if it exists)
-drop policy if exists "Public Access" on storage.objects;
+-- 2. Create the policy (Drop first to avoid errors if it exists).
+do $$
+begin
+  begin
+    drop policy if exists "Public Access" on storage.objects;
 
-create policy "Public Access"
-on storage.objects for all
-using ( bucket_id = 'receipts' )
-with check ( bucket_id = 'receipts' );
+    create policy "Public Access"
+    on storage.objects for all
+    using ( bucket_id = 'receipts' )
+    with check ( bucket_id = 'receipts' );
+  exception
+    when insufficient_privilege then
+      raise notice 'Skipping storage.objects policy DDL (must be table owner).';
+  end;
+end
+$$;

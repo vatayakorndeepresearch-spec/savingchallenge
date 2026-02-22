@@ -85,21 +85,37 @@ insert into storage.buckets (id, name, public)
 values ('receipts', 'receipts', false)
 on conflict (id) do update set public = false;
 
-alter table storage.objects enable row level security;
+-- Some hosted roles cannot own storage.objects.
+-- Keep app table setup working even when storage policy DDL is not permitted.
+do $$
+begin
+  begin
+    alter table storage.objects enable row level security;
+  exception
+    when insufficient_privilege then
+      raise notice 'Skipping ALTER TABLE storage.objects (must be table owner).';
+  end;
 
-drop policy if exists "Receipts Owner Access" on storage.objects;
-drop policy if exists "Public Access" on storage.objects;
+  begin
+    drop policy if exists "Receipts Owner Access" on storage.objects;
+    drop policy if exists "Public Access" on storage.objects;
 
-create policy "Receipts Owner Access"
-on storage.objects for all to authenticated
-using (
-  bucket_id = 'receipts'
-  and split_part(name, '/', 1) = coalesce(nullif(auth.jwt() ->> 'owner', ''), auth.uid()::text)
-)
-with check (
-  bucket_id = 'receipts'
-  and split_part(name, '/', 1) = coalesce(nullif(auth.jwt() ->> 'owner', ''), auth.uid()::text)
-);
+    create policy "Receipts Owner Access"
+    on storage.objects for all to authenticated
+    using (
+      bucket_id = 'receipts'
+      and split_part(name, '/', 1) = coalesce(nullif(auth.jwt() ->> 'owner', ''), auth.uid()::text)
+    )
+    with check (
+      bucket_id = 'receipts'
+      and split_part(name, '/', 1) = coalesce(nullif(auth.jwt() ->> 'owner', ''), auth.uid()::text)
+    );
+  exception
+    when insufficient_privilege then
+      raise notice 'Skipping storage.objects policy DDL (must be table owner).';
+  end;
+end
+$$;
 
 -- 4) Indices
 create index if not exists idx_transactions_owner on public.transactions(owner);

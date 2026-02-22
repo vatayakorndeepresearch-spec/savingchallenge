@@ -11,12 +11,28 @@ insert into storage.buckets (id, name, public)
 values ('receipts', 'receipts', true)
 on conflict (id) do update set public = true;
 
-alter table storage.objects enable row level security;
+-- Some hosted roles cannot own storage.objects.
+-- Keep no-auth mode for app tables working even when storage policy DDL is not permitted.
+do $$
+begin
+  begin
+    alter table storage.objects enable row level security;
+  exception
+    when insufficient_privilege then
+      raise notice 'Skipping ALTER TABLE storage.objects (must be table owner).';
+  end;
 
-drop policy if exists "Receipts Owner Access" on storage.objects;
-drop policy if exists "Public Access" on storage.objects;
+  begin
+    drop policy if exists "Receipts Owner Access" on storage.objects;
+    drop policy if exists "Public Access" on storage.objects;
 
-create policy "Public Access"
-on storage.objects for all
-using (bucket_id = 'receipts')
-with check (bucket_id = 'receipts');
+    create policy "Public Access"
+    on storage.objects for all
+    using (bucket_id = 'receipts')
+    with check (bucket_id = 'receipts');
+  exception
+    when insufficient_privilege then
+      raise notice 'Skipping storage.objects policy DDL (must be table owner).';
+  end;
+end
+$$;
