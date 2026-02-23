@@ -2,6 +2,9 @@
 
 A minimal savings-tracking app for couples, built with SvelteKit and Supabase.
 
+**Last Updated:** February 24, 2026
+**Repository:** https://github.com/vatayakorndeepresearch-spec/savingchallenge
+
 ## Features
 
 - **Dashboard**: Monthly summary and saving score.
